@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>HITS:0</title>
+  <style>
+    body { margin: 0; font: 14px system-ui; background: #f8fafc; }
+    .btn { position: absolute; width: 160px; height: 60px; border: 2px solid #0f172a;
+           border-radius: 8px; background: #e2e8f0; display: grid; place-items: center;
+           font-weight: 700; user-select: none; }
+    #a { left: 60px; top: 120px; }
+    #b { left: 320px; top: 260px; }
+    #out { position: absolute; left: 60px; top: 40px; font: 13px ui-monospace, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <div id="out">hits: 0</div>
+  <div class="btn" id="a">TARGET A</div>
+  <div class="btn" id="b">TARGET B</div>
+  <script>
+    window.__hits = [];
+    const origin = performance.timeOrigin;
+    function record(which, e) {
+      window.__hits.push({
+        which, t: origin + e.timeStamp, trusted: e.isTrusted,
+        x: e.clientX, y: e.clientY, vis: document.visibilityState
+      });
+      document.getElementById('out').textContent =
+        'hits: ' + window.__hits.length + ' | first: ' + Math.round(window.__hits[0].t);
+      // The title is how the harness reads results out of a tab it is not
+      // attached to; V proves whether the tab was on screen when it fired.
+      document.title = 'HITS:' + window.__hits.length
+        + '|T0:' + Math.round(window.__hits[0].t)
+        + '|TR:' + window.__hits.filter(h => h.trusted).length
+        + '|A:' + window.__hits.filter(h => h.which === 'a').length
+        + '|B:' + window.__hits.filter(h => h.which === 'b').length
+        + '|V:' + window.__hits[0].vis
+        + '|SP:' + Math.round(window.__hits[window.__hits.length - 1].t - window.__hits[0].t);
+    }
+    document.getElementById('a').addEventListener('click', (e) => record('a', e));
+    document.getElementById('b').addEventListener('click', (e) => record('b', e));
+  </script>
+</body>
+</html>

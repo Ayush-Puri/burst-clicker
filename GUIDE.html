@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Burst Clicker — Quick Start</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --ink: #14192b; --dim: #5b6479; --faint: #8b93a7;
+    --line: #e3e6ef; --accent: #0e7490; --rose: #d6395a; --amber: #a16207;
+    --code-bg: #0f172a; --code-ink: #e2e8f0;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1120; --card: #0f172a; --ink: #e6eaf3; --dim: #a3adc2; --faint: #7b859c;
+      --line: #212c44; --accent: #22d3ee; --rose: #fb7185; --amber: #fbbf24;
+      --code-bg: #060b16; --code-ink: #e2e8f0;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1120; --card: #0f172a; --ink: #e6eaf3; --dim: #a3adc2; --faint: #7b859c;
+    --line: #212c44; --accent: #22d3ee; --rose: #fb7185; --amber: #fbbf24;
+    --code-bg: #060b16; --code-ink: #e2e8f0;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 68ch; margin: 0 auto; padding: 44px 24px 72px; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: 600 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 14px;
+  }
+  .badge i { width: 9px; height: 9px; border-radius: 50%; border: 2.5px solid var(--rose); display: inline-block; }
+  h1 { font-size: 34px; line-height: 1.15; margin: 0 0 10px; letter-spacing: -.02em; }
+  .lede { font-size: 17px; color: var(--dim); margin: 0 0 8px; }
+  .path { font: 12px var(--mono); color: var(--faint); margin-bottom: 34px; }
+
+  h2 {
+    font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+    margin: 40px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  }
+  p { margin: 0 0 12px; }
+
+  ol.steps { counter-reset: s; list-style: none; margin: 0; padding: 0; }
+  ol.steps > li { counter-increment: s; position: relative; padding: 0 0 16px 44px; margin: 0; }
+  ol.steps > li::before {
+    content: counter(s); position: absolute; left: 0; top: 1px;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    font: 700 13px/28px var(--mono); text-align: center;
+  }
+  ol.steps > li > b:first-child { display: block; }
+
+  code {
+    font: 13px var(--mono); background: var(--card); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 5px;
+  }
+  pre {
+    background: var(--code-bg); color: var(--code-ink); border-radius: 9px;
+    padding: 13px 15px; overflow-x: auto; font: 13px/1.6 var(--mono); margin: 0 0 14px;
+  }
+  pre code { background: none; border: 0; padding: 0; color: inherit; font-size: inherit; }
+
+  .tbl { overflow-x: auto; margin: 0 0 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font: 600 10.5px/1.4 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+  td:first-child { white-space: nowrap; font-family: var(--mono); font-size: 13px; }
+  td.num { font-family: var(--mono); white-space: nowrap; }
+
+  .note {
+    border-left: 3px solid var(--accent); background: var(--card);
+    border-radius: 0 8px 8px 0; padding: 12px 15px; margin: 0 0 16px;
+  }
+  .note.warn { border-left-color: var(--amber); }
+  .note.stop { border-left-color: var(--rose); }
+  .note h4 {
+    margin: 0 0 5px; font: 600 11px/1.4 var(--mono);
+    letter-spacing: .08em; text-transform: uppercase; color: var(--dim);
+  }
+  .note p:last-child { margin-bottom: 0; }
+
+  .keys { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+  .keys span {
+    background: var(--card); border: 1px solid var(--line); border-radius: 7px;
+    padding: 6px 11px; font-size: 14px;
+  }
+  .keys kbd {
+    font: 600 13px var(--mono); background: var(--code-bg); color: var(--code-ink);
+    border-radius: 4px; padding: 2px 6px; margin-right: 7px;
+  }
+
+  footer { margin-top: 46px; padding-top: 16px; border-top: 1px solid var(--line);
+           font-size: 13px; color: var(--faint); }
+
+  @media print {
+    @page { margin: 14mm; }
+    :root { --bg: #fff; --card: #fff; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { font-size: 11pt; }
+    .wrap { max-width: none; padding: 0; }
+    h1 { font-size: 24pt; }
+    h2 { margin-top: 20px; page-break-after: avoid; }
+    ol.steps > li, tr, .note { page-break-inside: avoid; }
+    pre { white-space: pre-wrap; }
+    .tbl { overflow: visible; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="badge"><i></i> Chrome extension</div>
+  <h1>Burst Clicker</h1>
+  <p class="lede">Clicks the spots you mark, at an exact wall-clock time you type, in a rapid
+  burst — across as many tabs as you like, whether or not they are on screen.</p>
+  <p class="path">~/code/burst-clicker</p>
+
+  <h2>Install</h2>
+  <ol class="steps">
+    <li><b>Open <code>chrome://extensions</code></b> and switch on <b>Developer mode</b> (top right).</li>
+    <li><b>Click “Load unpacked”</b> and pick the folder <code>~/code/burst-clicker</code>.</li>
+    <li><b>Pin the target icon</b> to the toolbar so you can reach it fast.</li>
+  </ol>
+
+  <h2>Run one</h2>
+  <ol class="steps">
+    <li><b>Open the page you want clicked</b> and get it into the exact state and window size
+      you'll leave it in.</li>
+    <li><b>Toolbar icon → Place markers.</b> Click the page wherever a click should fire.
+      Numbered rings appear. Drag to nudge, right-click to delete, <kbd>Esc</kbd> to exit.</li>
+    <li><b>Set “Fire at”.</b> Default is 1:00 pm. Type it however you like — see below.</li>
+    <li><b>Set the burst</b> clicks per marker, and the gap between them.</li>
+    <li><b>Arm this tab.</b> Repeat on as many tabs as you want, then leave them open and go
+      do something else.</li>
+  </ol>
+
+  <div class="keys">
+    <span><kbd>⌥⇧M</kbd>panel</span>
+    <span><kbd>⌥⇧P</kbd>place mode</span>
+    <span><kbd>⌥⇧A</kbd>arm / disarm</span>
+  </div>
+
+  <h2>An exact instant, not a countdown</h2>
+  <p>A countdown accumulates error — every tick that lands a few milliseconds late pushes the
+  end further out, and in a hidden tab a timer can be a whole second coarse.</p>
+  <p>This never counts down. Arming turns your text into <b>one absolute millisecond</b>, and
+  the wait loop re-reads the system clock on every pass, sleeping most of the way and then
+  busy-spinning the last few milliseconds onto the target. A late wake-up corrects itself
+  instead of compounding. The countdown on screen is only a readout.</p>
+  <div class="note">
+    <h4>Which means</h4>
+    <p>A page reload, a tab shuffle, or Chrome shutting the extension's worker down and
+    restarting it cannot shift the moment it fires. The stored schedule is the instant
+    itself, never “time remaining”.</p>
+  </div>
+
+  <h2>Typing the time</h2>
+  <p>The field takes whatever is natural and rewrites it to <code>HH:MM:SS.mmm</code> the
+  moment you commit it, so you can see what it understood:</p>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>You type</th><th>It fires at</th></tr></thead>
+    <tbody>
+      <tr><td>1pm · 1 pm · 1 p.m.</td><td class="num">13:00:00.000</td></tr>
+      <tr><td>1:05 PM</td><td class="num">13:05:00.000</td></tr>
+      <tr><td>13:00</td><td class="num">13:00:00.000</td></tr>
+      <tr><td>13:00:00.250</td><td class="num">13:00:00.250 — millisecond precision</td></tr>
+      <tr><td>9:30</td><td class="num">09:30:00.000</td></tr>
+      <tr><td>12am · 12pm</td><td class="num">00:00:00.000 · 12:00:00.000</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>A bare hour with no am/pm is read as 24-hour (<code>1</code> → 01:00). A time already
+  past today rolls over to tomorrow. Anything unreadable is rejected out loud rather than
+  guessed at.</p>
+
+  <h2>The fields</h2>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>Field</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td>Fire at</td><td>The exact local instant. Default 1:00 pm.</td></tr>
+      <tr><td>Clock offset</td><td>Shifts the target. <code>-150</code> fires 150 ms early — for a server clock that runs ahead of yours.</td></tr>
+      <tr><td>Start delay</td><td>Waits this long <em>after</em> the target before the first click.</td></tr>
+      <tr><td>Clicks per marker</td><td>How many clicks each marker gets.</td></tr>
+      <tr><td>Gap between clicks</td><td>Milliseconds between consecutive clicks. <code>0</code> fires them in a single tick.</td></tr>
+      <tr><td>Order</td><td>Round-robin (<code>1,2,3,1,2,3</code>) or per marker (<code>1,1,1,2,2,2</code>).</td></tr>
+      <tr><td>Keep bursting for</td><td>Repeats the whole burst for this long — for when the button you want takes a moment to appear.</td></tr>
+      <tr><td>Gap between rounds</td><td>Pause between repeats while sustaining.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Total clicks are capped at 5000 per run.</p>
+
+  <h2>Many tabs, and tabs you can't see</h2>
+  <p>Arm as many tabs as you want. Each schedule is a <b>snapshot</b> taken when you armed
+  it, so editing the fields afterwards only affects the <em>next</em> tab you arm — an armed
+  tab keeps the time it was armed with. The popup's <b>Armed tabs</b> list shows every one
+  with its own countdown and a ✕ to disarm it.</p>
+  <p>A tab does not need to be focused, on screen, or in the front window. That works
+  because the extension's background worker owns the clock, not the page: Chrome throttles
+  page timers to once a second in a hidden tab, so a page can't be trusted to time its own
+  burst. The worker times everything and drives each tab — dispatching the input itself in
+  trusted mode, or handing the page short chunks it executes by spinning, which throttling
+  doesn't touch.</p>
+  <div class="note">
+    <h4>Verified, not assumed</h4>
+    <p>The test suite arms two off-screen tabs for instants 1.5 s apart, and checks each one
+    reported <code>visibilityState === "hidden"</code> at the moment it clicked. Both landed
+    within 2 ms.</p>
+  </div>
+  <p>Armed tabs are also protected from Chrome's Memory Saver, so it can't discard them while
+  they wait.</p>
+
+  <h2>Measured accuracy</h2>
+  <p>Drift of the first click from the target instant, from the bundled end-to-end test on
+  Chrome 151 / macOS:</p>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>Scenario</th><th>Typical</th><th>Worst seen</th></tr></thead>
+    <tbody>
+      <tr><td>Visible tab, synthetic</td><td class="num">0.3–3 ms</td><td class="num">3 ms</td></tr>
+      <tr><td>Background tab, synthetic</td><td class="num">1–2 ms</td><td class="num">2 ms</td></tr>
+      <tr><td>Background tab, trusted</td><td class="num">2 ms</td><td class="num">28 ms</td></tr>
+      <tr><td>After the worker was killed mid-wait</td><td class="num">2–20 ms</td><td class="num">20 ms</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Accuracy is against <em>your</em> system clock — any gap to the site's server clock is
+  yours to absorb with <b>Clock offset</b>.</p>
+
+  <h2>Trusted clicks</h2>
+  <p>Some sites ignore synthetic events and only react to real input. The
+  <b>Trusted clicks</b> toggle dispatches genuine browser input through the DevTools
+  protocol instead, which the page cannot tell apart from your mouse.</p>
+  <div class="note warn">
+    <h4>Turn it on before placing markers</h4>
+    <p>Chrome shows a “started debugging this browser” banner while attached, and that banner
+    shifts the page down. Markers placed before the banner appears would point slightly off.
+    Enable the toggle first, then place.</p>
+  </div>
+
+  <h2>How markers behave</h2>
+  <p>Markers are <b>screen positions</b>, like a desktop auto-clicker aimed at a spot — not
+  references to a particular button. They stay put in the viewport and hit whatever ends up
+  underneath.</p>
+  <div class="note stop">
+    <h4>So</h4>
+    <p>Don't scroll or resize the window after placing markers. They're remembered per page
+    URL, so a reload is fine — and two tabs on the same URL share the same click points,
+    while still keeping their own separate times.</p>
+  </div>
+  <p>The extension's own panel turns click-through while a burst is firing, and slides to a
+  clear corner when you arm if a marker sits under it, so it can never eat a click.</p>
+
+  <h2>If something misses</h2>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>Symptom</th><th>Cause / fix</th></tr></thead>
+    <tbody>
+      <tr><td>Nothing armed after restart</td><td>Chrome reassigns tab ids on restart, so schedules are cleared. Re-arm.</td></tr>
+      <tr><td>Fired very late</td><td>The Mac slept through the target. Nothing in the browser can fix that — keep it awake.</td></tr>
+      <tr><td>Schedule vanished</td><td>The tab was closed, or navigated to a different URL. Both cancel it by design.</td></tr>
+      <tr><td>Clicks land nowhere</td><td>The page scrolled or resized after placing. Re-place the markers.</td></tr>
+      <tr><td>Page ignores the clicks</td><td>Enable <b>Trusted clicks</b>, then re-place markers.</td></tr>
+      <tr><td>Consistently early / late</td><td>Nudge <b>Clock offset</b> by the observed drift.</td></tr>
+      <tr><td>Fired but nothing was reserved</td><td>Check the popup's run log — it lists which element each click actually hit.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>Test it yourself</h2>
+  <pre><code>cd ~/code/burst-clicker
+node test/e2e.mjs</code></pre>
+  <p>Launches a throwaway headless Chrome, installs the extension, drives the real UI, and
+  asserts the 1 pm default and every accepted time format, click counts, ordering,
+  coordinates, drift, <code>isTrusted</code>, that a tab was genuinely hidden when it fired,
+  two off-screen tabs hitting their own separate instants, Memory-Saver protection, tab-close
+  cleanup, and recovery after the worker is force-killed mid-wait — 58 checks.</p>
+
+  <footer>
+    Automating clicks may be against some sites' terms of service — that call is yours.
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,47 @@
+Burst Clicker — install (about 20 seconds)
+=========================================
+
+Clicks spots you mark, at an exact time you type, in a rapid burst. Works across
+several tabs at once, including tabs that aren't on screen.
+
+1. UNZIP THIS FILE FIRST.
+   Chrome needs a folder, not a zip. You should end up with a folder called
+   "burst-clicker" containing manifest.json.
+
+2. Open Chrome and go to:  chrome://extensions
+
+3. Turn ON "Developer mode" (toggle, top right).
+
+4. Click "Load unpacked" and select the unzipped "burst-clicker" folder.
+   Select the folder that directly contains manifest.json — not a folder above it.
+
+5. A card called "Burst Clicker" appears. Click the puzzle-piece icon in the
+   Chrome toolbar and pin it so you can reach it.
+
+Using it
+--------
+1. Open the page you want clicked, sized how you'll leave it.
+2. Click the Burst Clicker icon -> "Place markers", then click the page wherever
+   you want a click to happen. Numbered rings appear. Esc when done.
+3. Set "Fire at" — type it however you like: 1pm, 1:05 PM, 13:00, 13:00:00.250
+4. Set clicks per marker and the gap between them.
+5. "Arm this tab". Repeat on other tabs if you want. Leave them open — they do
+   NOT need to be on screen.
+
+Full guide: open GUIDE.html (in this folder) in any browser.
+
+Things worth knowing
+--------------------
+- Chrome will warn "Disable developer mode extensions" now and then. That's
+  normal for any extension not installed from the Chrome Web Store. Keep it.
+- Markers are screen positions, not buttons. Don't scroll or resize the window
+  after placing them.
+- Schedules are cleared when you quit Chrome (tab ids change) — re-arm after
+  restarting. If the computer sleeps through the time, it fires late on wake.
+- chrome:// pages, the Chrome Web Store and PDFs can't be clicked by any
+  extension. That's a Chrome rule, not a bug.
+- "Trusted clicks" is optional, for sites that ignore normal synthetic clicks.
+  It uses Chrome's debugger, so Chrome shows a "being debugged" banner while
+  armed. Turn it on BEFORE placing markers — the banner shifts the page.
+
+Automating clicks may be against some sites' terms of service. Your call.

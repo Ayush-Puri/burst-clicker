@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "Burst Clicker",
+  "version": "1.1.0",
+  "description": "Drop click markers on a page, then fire a rapid burst of clicks at an exact system-clock time.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "alarms",
+    "scripting",
+    "debugger"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Burst Clicker"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "lib/time.js",
+        "lib/plan.js",
+        "content/content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "commands": {
+    "toggle-panel": {
+      "suggested_key": {
+        "default": "Alt+Shift+M"
+      },
+      "description": "Show / hide the Burst Clicker panel"
+    },
+    "toggle-place": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "Toggle marker placement mode"
+    },
+    "toggle-arm": {
+      "suggested_key": {
+        "default": "Alt+Shift+A"
+      },
+      "description": "Arm / disarm the scheduled burst"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <span class="dot" id="dot"></span>
+    <h1>Burst Clicker</h1>
+    <span class="clock" id="clock">--:--:--.---</span>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="cd idle" id="countdown">--:--:--.---</div>
+      <div class="sub" id="sub">no markers yet</div>
+    </section>
+
+    <div id="unsupported" class="banner hidden">
+      This tab can't be clicked (a <code>chrome://</code> page, the Web Store, or a PDF).
+      Open a normal http/https page — other armed tabs below still run.
+    </div>
+
+    <section class="grid">
+      <label class="f wide">
+        <span>Fire at — exact local time</span>
+        <input id="time" data-k="time" placeholder="1:00 pm  ·  13:00:00.250">
+      </label>
+      <label class="f">
+        <span>Clock offset (ms)</span>
+        <input id="offsetMs" data-k="offsetMs" type="number" step="10">
+      </label>
+      <label class="f">
+        <span>Start delay (ms)</span>
+        <input id="startDelayMs" data-k="startDelayMs" type="number" min="0" step="10">
+      </label>
+    </section>
+
+    <div class="quick">
+      <span>Quick set:</span>
+      <button class="link" data-at="13:00:00.000">1 pm</button>
+      <button class="link" data-in="30">+30s</button>
+      <button class="link" data-in="60">+1m</button>
+      <button class="link" data-in="300">+5m</button>
+    </div>
+
+    <h2>Burst</h2>
+    <section class="grid">
+      <label class="f">
+        <span>Clicks per marker</span>
+        <input id="burstCount" data-k="burstCount" type="number" min="1" max="500">
+      </label>
+      <label class="f">
+        <span>Gap between clicks (ms)</span>
+        <input id="burstIntervalMs" data-k="burstIntervalMs" type="number" min="0" step="5">
+      </label>
+      <label class="f wide">
+        <span>Order</span>
+        <select id="pattern" data-k="pattern">
+          <option value="roundrobin">Round-robin — 1,2,3, 1,2,3, …</option>
+          <option value="permarker">Per marker — 1,1,1, 2,2,2, …</option>
+        </select>
+      </label>
+      <label class="f">
+        <span>Keep bursting for (ms)</span>
+        <input id="sustainMs" data-k="sustainMs" type="number" min="0" step="100">
+      </label>
+      <label class="f">
+        <span>Gap between rounds (ms)</span>
+        <input id="sustainGapMs" data-k="sustainGapMs" type="number" min="0" step="10">
+      </label>
+    </section>
+
+    <label class="toggle">
+      <input id="trusted" data-k="trusted" type="checkbox">
+      <span>
+        <b>Trusted clicks (DevTools protocol)</b>
+        <em>Real browser input for sites that reject synthetic clicks. Chrome shows a
+        "being debugged" banner — turn this on <u>before</u> placing markers, since the
+        banner shifts the page.</em>
+      </span>
+    </label>
+
+    <h2>This tab <span id="mcount" class="pill">0</span></h2>
+    <div class="row">
+      <button id="place" class="b">◎ Place markers</button>
+      <button id="panel" class="b">Panel</button>
+      <button id="clear" class="b">Clear</button>
+    </div>
+    <p class="hint">Place mode: click the page to drop a marker · drag to move ·
+      right-click to delete · Esc to exit. Markers are viewport coordinates, saved per
+      page URL.</p>
+
+    <div class="row main-row">
+      <button id="arm" class="b primary">Arm this tab</button>
+      <button id="test" class="b">Test now</button>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <h2>Armed tabs <span id="acount" class="pill">0</span></h2>
+    <div id="armedList" class="armed"></div>
+    <p class="hint" id="armedHint">Arm as many tabs as you like — each keeps its own time
+      and markers. They fire whether or not the tab is on screen; just leave them open.</p>
+    <div class="row"><button id="disarmAll" class="b">Disarm all</button></div>
+
+    <div id="lastrun" class="lastrun hidden"></div>
+  </main>
+
+  <script src="../lib/time.js"></script>
+  <script src="../lib/plan.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
