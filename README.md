@@ -55,7 +55,9 @@ Unpacked extensions do not auto-update. Your markers and settings survive a relo
 
 1. Open the page you want to click on, sized the way you will leave it.
 2. Toolbar icon → **Place markers**, then click the page wherever you want a click to fire.
-   Numbered rings appear. Drag to move, right-click to delete, `Esc` to exit.
+   Numbered rings appear — **green** means the marker locked onto the button under it and
+   will follow that button; red means it is a bare coordinate. Drag to move, right-click to
+   delete, `Esc` to exit.
 3. Set **Fire at**. Default is **1:00 pm**. Type it however you like — see
    [Time input](#time-input).
 4. Set **Clicks per marker** and **Gap between clicks**.
@@ -63,6 +65,20 @@ Unpacked extensions do not auto-update. Your markers and settings survive a relo
    with its own countdown. Then leave them open and go do something else.
 
 Keyboard: `⌥⇧M` panel · `⌥⇧P` place mode · `⌥⇧A` arm/disarm.
+
+### One exact click on a dialog button
+
+The common case — a confirm dialog is open and its **Yes** must be clicked at 1 pm exactly,
+once:
+
+1. Open the dialog so the button is on screen.
+2. **Place markers** → click the middle of the button. The ring turns green: locked.
+3. Leave **Lock markers to the element** and **Stop as soon as the click lands** on.
+4. **1 pm** (the default) → **⟳ sync to server clock** → **Arm this tab**.
+
+Leave *Clicks per marker* at a few: the first click fires on the instant, and the rest are
+only spent if the dialog is still there. The moment the button is gone the burst stops, so
+a retry can never land on the page behind a dialog that just closed.
 
 ## Development
 
@@ -79,6 +95,28 @@ python3 icons/make_icons.py     # regenerate the PNG icons
 Point the suite at a packaged copy instead of the working tree with
 `BURST_EXT_DIR=/path/to/unzipped node test/e2e.mjs`. See
 [What the tests cover](#what-the-tests-cover).
+
+## Getting the click out as early as possible
+
+Everything that does not have to happen at the instant is done before it:
+
+- the worker resolves the schedule to one absolute epoch ms at arm time, and re-reads
+  `target - Date.now()` on every pass of the wait, so a late wake-up self-corrects;
+- ~600ms out, the page resolves every marker to its element, caches it, and sends the hover
+  half of the click (`pointerover`, `mouseover`, `pointermove`, `mousemove`), so hover
+  handlers and the hit-test are already paid for;
+- 250ms out, the extension's own panel goes click-through;
+- 60ms out, the page is handed the click and **spins** to the instant — hidden-tab timers
+  are throttled to 1/s, a synchronous spin is not;
+- at the instant the page has only `pointerdown → mousedown → pointerup → mouseup → click`
+  left to dispatch, on an element it already holds.
+
+Trusted mode is the same story from the worker's side: the debugger is attached at arm time,
+the cursor is parked on the target ahead of the instant, the first click's coordinates are
+re-resolved at ~60ms out (which is what catches a dialog that only opens in the last
+second), and the CDP commands are pipelined rather than awaited one by one.
+
+Measured drift is unchanged by any of it: 0.3–3ms visible, 1–2ms hidden.
 
 ## Why a time, not a timer
 
@@ -116,13 +154,15 @@ to tomorrow. Unreadable input is rejected out loud rather than guessed at.
 | Field | What it does |
 |---|---|
 | Fire at | The exact local instant. Default 1:00 pm. |
-| Clock offset | Shifts the target. `-150` fires 150ms early — use it to compensate for a server clock that runs ahead of yours. |
+| Clock offset | Shifts the target. `-150` fires 150ms early. **⟳ sync to server clock** measures it for you: it samples the site's `Date` header until it ticks over, brackets the moment the server crossed a second, and writes the difference here. |
 | Start delay | Waits this long *after* the target before the first click. |
 | Clicks per marker | How many clicks each marker gets. |
 | Gap between clicks | Milliseconds between consecutive clicks. `0` fires them in one tick. |
 | Order | Round-robin (`1,2,3,1,2,3`) or per marker (`1,1,1,2,2,2`). |
 | Keep bursting for | Repeats the whole burst for this many ms after the first round. |
 | Gap between rounds | Pause between repeats while sustaining. |
+| Lock markers to the element | On by default. A marker remembers the button it was dropped on and clicks wherever that button is at fire time. |
+| Stop as soon as the click lands | On by default (for locked markers). Ends the burst the moment the target is gone. |
 
 Total clicks are capped at 5000 per run.
 
@@ -177,10 +217,15 @@ enable the toggle and detaches after the burst.
 
 ## How markers behave
 
-Markers are **viewport coordinates**, like a desktop auto-clicker pointed at a spot on
-screen — not references to a particular element. If the page scrolls, the marker stays at
-the same place on screen and hits whatever ends up there. Don't scroll or resize after
-placing.
+A marker remembers two things: the **viewport coordinate** you dropped it on, and — with
+**Lock markers to the element** on — the **element** that was under it. The lock stores the
+element's selector, its visible text, and where inside its box you clicked, so at fire time
+the click goes wherever that button is *now*. A centred dialog that moves because the window
+was resized, because the DevTools banner appeared, or because it re-rendered, still gets
+hit. Only if the element cannot be found does the marker fall back to its stored pixel.
+
+Turn the lock off and a marker is a plain coordinate, like a desktop auto-clicker pointed at
+a spot on screen: it hits whatever ends up there. Then don't scroll or resize after placing.
 
 Markers are keyed by URL (origin + path), so two tabs on the same page share the same click
 points — but each tab still keeps its own time and its own schedule.
@@ -208,8 +253,11 @@ over CDP, drives the real UI, and asserts: default 1 pm and every accepted/rejec
 format; click counts, ordering, coordinates and drift; `isTrusted`; that the tab reported
 `visibilityState === 'hidden'` when it fired; two tabs firing at their own instants 1.5 s
 apart while both are off screen; Memory-Saver protection set and released; schedules
-dropped when a tab closes; and a burst still landing on time after the service worker is
-force-terminated mid-wait. **58 checks.**
+dropped when a tab closes; a burst still landing on time after the service worker is
+force-terminated mid-wait; and — against a stand-in confirm dialog — a locked marker
+following its button 150px after arming, one click ending the burst with nothing leaking
+onto the page behind the closed dialog, the same thing with real trusted input in a hidden
+tab, and a dialog that only opens 450ms before the instant still being hit. **83 checks.**
 
 Chrome 151 ignores `--load-extension`, so the harness installs via the browser-level CDP
 command `Extensions.loadUnpacked`, which needs `--enable-unsafe-extension-debugging` and a

@@ -135,7 +135,9 @@
     <li><b>Open the page you want clicked</b> and get it into the exact state and window size
       you'll leave it in.</li>
     <li><b>Toolbar icon → Place markers.</b> Click the page wherever a click should fire.
-      Numbered rings appear. Drag to nudge, right-click to delete, <kbd>Esc</kbd> to exit.</li>
+      Numbered rings appear — a <b>green</b> ring means the marker locked onto the button
+      under it and will follow that button; red means it is a bare coordinate. Drag to nudge,
+      right-click to delete, <kbd>Esc</kbd> to exit.</li>
     <li><b>Set “Fire at”.</b> Default is 1:00 pm. Type it however you like — see below.</li>
     <li><b>Set the burst</b> clicks per marker, and the gap between them.</li>
     <li><b>Arm this tab.</b> Repeat on as many tabs as you want, then leave them open and go
@@ -147,6 +149,35 @@
     <span><kbd>⌥⇧P</kbd>place mode</span>
     <span><kbd>⌥⇧A</kbd>arm / disarm</span>
   </div>
+
+  <h2>One exact click on a dialog button</h2>
+  <p>The common case: a confirm dialog is open, and its <b>Yes</b> has to be clicked at 1 pm
+  exactly, once.</p>
+  <ol class="steps">
+    <li><b>Open the dialog</b> so the button is on screen.</li>
+    <li><b>Place markers → click the middle of the button.</b> The ring turns green: locked to
+      that button, wherever it moves to.</li>
+    <li><b>Leave “Lock markers to the element” and “Stop as soon as the click lands” on.</b></li>
+    <li><b>1 pm</b> (the default) → <b>⟳ sync to server clock</b> → <b>Arm this tab</b>.</li>
+  </ol>
+  <div class="note">
+    <h4>Why the spare clicks are safe</h4>
+    <p>Leave <em>clicks per marker</em> at a few. The first fires on the instant; the rest are
+    only spent if the button is still there. Between clicks the page is asked whether the
+    locked element still exists — the moment it is gone the burst stops, so a retry can never
+    land on the page behind a dialog that just closed.</p>
+  </div>
+
+  <h2>Getting the click out as early as possible</h2>
+  <p>Everything that does not have to happen at the instant happens before it: ~600 ms out the
+  page resolves every marker to its element, caches it, and sends the hover half of the click;
+  250 ms out the extension's own panel goes click-through; 60 ms out the page is handed the
+  click and <b>spins</b> to the instant, because hidden-tab timers are throttled to once a
+  second and a spin is not. At the instant there is only
+  <code>pointerdown → mousedown → pointerup → mouseup → click</code> left, on an element the
+  page already holds. Trusted mode parks the cursor early too, and re-resolves the first
+  click's coordinates about 60 ms out — which is what catches a dialog that only opens in the
+  last second.</p>
 
   <h2>An exact instant, not a countdown</h2>
   <p>A countdown accumulates error — every tick that lands a few milliseconds late pushes the
@@ -188,13 +219,15 @@
     <thead><tr><th>Field</th><th>What it does</th></tr></thead>
     <tbody>
       <tr><td>Fire at</td><td>The exact local instant. Default 1:00 pm.</td></tr>
-      <tr><td>Clock offset</td><td>Shifts the target. <code>-150</code> fires 150 ms early — for a server clock that runs ahead of yours.</td></tr>
+      <tr><td>Clock offset</td><td>Shifts the target. <code>-150</code> fires 150 ms early. <b>⟳ sync to server clock</b> measures it for you: it samples the site's <code>Date</code> header until it ticks over, brackets the moment the server crossed a second, and writes the difference here.</td></tr>
       <tr><td>Start delay</td><td>Waits this long <em>after</em> the target before the first click.</td></tr>
       <tr><td>Clicks per marker</td><td>How many clicks each marker gets.</td></tr>
       <tr><td>Gap between clicks</td><td>Milliseconds between consecutive clicks. <code>0</code> fires them in a single tick.</td></tr>
       <tr><td>Order</td><td>Round-robin (<code>1,2,3,1,2,3</code>) or per marker (<code>1,1,1,2,2,2</code>).</td></tr>
       <tr><td>Keep bursting for</td><td>Repeats the whole burst for this long — for when the button you want takes a moment to appear.</td></tr>
       <tr><td>Gap between rounds</td><td>Pause between repeats while sustaining.</td></tr>
+      <tr><td>Lock markers to the element</td><td>On by default. The marker remembers the button it was dropped on and clicks wherever that button is at fire time.</td></tr>
+      <tr><td>Stop as soon as the click lands</td><td>On by default, for locked markers. Ends the burst the moment the target is gone.</td></tr>
     </tbody>
   </table>
   </div>
@@ -249,14 +282,18 @@
   </div>
 
   <h2>How markers behave</h2>
-  <p>Markers are <b>screen positions</b>, like a desktop auto-clicker aimed at a spot — not
-  references to a particular button. They stay put in the viewport and hit whatever ends up
-  underneath.</p>
+  <p>A marker remembers two things: the <b>screen position</b> you dropped it on, and — with
+  the lock on — the <b>element</b> that was under it: its selector, its visible text, and
+  where inside its box you clicked. At fire time the click goes wherever that button is
+  <em>now</em>, so a centred dialog that moved because the window was resized, because the
+  DevTools banner appeared, or because it re-rendered, still gets hit. Only if the element
+  cannot be found does the marker fall back to its stored pixel.</p>
   <div class="note stop">
-    <h4>So</h4>
-    <p>Don't scroll or resize the window after placing markers. They're remembered per page
-    URL, so a reload is fine — and two tabs on the same URL share the same click points,
-    while still keeping their own separate times.</p>
+    <h4>With the lock off</h4>
+    <p>A marker is a plain screen position, like a desktop auto-clicker aimed at a spot: it
+    hits whatever ends up underneath. Then don't scroll or resize after placing. Either way
+    markers are remembered per page URL, so a reload is fine — and two tabs on the same URL
+    share the same click points, while still keeping their own separate times.</p>
   </div>
   <p>The extension's own panel turns click-through while a burst is firing, and slides to a
   clear corner when you arm if a marker sits under it, so it can never eat a click.</p>
@@ -284,7 +321,7 @@ node test/e2e.mjs</code></pre>
   asserts the 1 pm default and every accepted time format, click counts, ordering,
   coordinates, drift, <code>isTrusted</code>, that a tab was genuinely hidden when it fired,
   two off-screen tabs hitting their own separate instants, Memory-Saver protection, tab-close
-  cleanup, and recovery after the worker is force-killed mid-wait — 58 checks.</p>
+  cleanup, recovery after the worker is force-killed mid-wait, and a locked marker following a dialog that moves, closes, or only opens in the last second — 83 checks.</p>
 
   <footer>
     Automating clicks may be against some sites' terms of service — that call is yours.

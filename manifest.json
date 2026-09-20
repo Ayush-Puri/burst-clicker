@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Burst Clicker",
-  "version": "1.1.0",
-  "description": "Drop click markers on a page, then fire a rapid burst of clicks at an exact system-clock time.",
+  "version": "1.2.0",
+  "description": "Drop click markers on a page \u2014 locked to the button under them \u2014 and fire at an exact system-clock time.",
   "permissions": [
     "storage",
     "tabs",

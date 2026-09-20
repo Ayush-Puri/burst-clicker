@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>HITS:0</title>
+  <style>
+    body { margin: 0; font: 14px system-ui; background: #eef2f7; }
+    #bg { position: absolute; inset: 0; }
+    #accept { position: absolute; left: 60px; top: 520px; width: 220px; height: 48px;
+              background: #2f7d32; color: #fff; display: grid; place-items: center; font-weight: 700; }
+    .modal { position: fixed; left: 50%; top: 50%; width: 420px; margin: -110px 0 0 -210px;
+             background: #fff; border-radius: 10px; padding: 20px; text-align: center;
+             box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+    .row { display: flex; gap: 16px; justify-content: center; margin-top: 16px; }
+    .row button { padding: 8px 24px; font-weight: 700; border-radius: 6px; }
+    #yes { background: #86efac; border: 2px solid #16a34a; }
+    #no  { background: #e5e7eb; border: 1px solid #cbd5e1; }
+  </style>
+</head>
+<body>
+  <div id="bg"></div>
+  <div id="accept">ACCEPT</div>
+  <div class="modal" id="modal">
+    <h2>Are you sure?</h2>
+    <div>Are you sure you want to accept this lead?</div>
+    <div class="row"><button id="yes">Yes</button><button id="no">No</button></div>
+  </div>
+  <script>
+    // Stands in for the real confirm dialog: Yes closes it, and anything behind
+    // it counts separately — a retry that lands on the page underneath is a bug,
+    // not a near miss.
+    window.__hits = [];
+    window.__bg = 0;
+    const origin = performance.timeOrigin;
+
+    function title() {
+      const h = window.__hits;
+      document.title = 'HITS:' + h.length
+        + '|T0:' + (h.length ? Math.round(h[0].t) : 0)
+        + '|TR:' + h.filter((x) => x.trusted).length
+        + '|BG:' + window.__bg
+        + '|V:' + (h.length ? h[0].vis : '-');
+    }
+
+    function onYes(e) {
+      const r = e.currentTarget.getBoundingClientRect();
+      window.__hits.push({
+        which: 'yes', t: origin + e.timeStamp, trusted: e.isTrusted,
+        x: e.clientX, y: e.clientY, vis: document.visibilityState,
+        inside: e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+      });
+      const m = document.getElementById('modal');
+      if (m) m.remove();
+      title();
+    }
+
+    function wire() {
+      const y = document.getElementById('yes');
+      if (y) y.addEventListener('click', onYes);
+    }
+    wire();
+    document.getElementById('bg').addEventListener('click', () => { window.__bg++; title(); });
+    document.getElementById('accept').addEventListener('click', () => { window.__bg++; title(); });
+
+    // The dialog moving is the whole point of locking a marker to its element.
+    window.__shift = (dx, dy) => {
+      const m = document.getElementById('modal');
+      m.style.margin = (-110 + dy) + 'px 0 0 ' + (-210 + dx) + 'px';
+      return m.getBoundingClientRect().left;
+    };
+    window.__reopen = () => {
+      if (document.getElementById('modal')) return false;
+      const m = document.createElement('div');
+      m.className = 'modal';
+      m.id = 'modal';
+      m.innerHTML = '<h2>Are you sure?</h2><div>Are you sure you want to accept this lead?</div>' +
+                    '<div class="row"><button id="yes">Yes</button><button id="no">No</button></div>';
+      document.body.appendChild(m);
+      wire();
+      window.__hits = [];
+      window.__bg = 0;
+      title();
+      return true;
+    };
+  </script>
+</body>
+</html>

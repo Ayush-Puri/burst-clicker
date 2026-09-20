@@ -13,7 +13,10 @@ const DEFAULTS = {
   pattern: 'roundrobin',
   sustainMs: 0,
   sustainGapMs: 100,
-  trusted: false
+  trusted: false,
+  lockToElement: true,
+  stopOnHit: true,
+  prewarmMs: 600
 };
 
 const K_SCHED = 'schedules';
@@ -21,6 +24,7 @@ const ALARM = 'burst-tick';
 const WAKE = 'burst-at:';
 const SHIELD_LEAD = 250;   // tell the page to go click-through this early
 const CHUNK_LEAD = 60;     // hand a chunk over this early; the page spins the rest
+const PREWARM_MIN = 300;   // resolve targets + prime hover at least this early
 const KEEPALIVE_MS = 20000;
 
 const attached = new Set();
@@ -172,10 +176,14 @@ async function arm(tabId, override) {
   const plan = BurstPlan.build(markers, settings);
   if (!plan.length) return { ok: false, error: 'nothing to click' };
 
+  // Stop-on-hit needs the page to run its own click handler between our clicks,
+  // and a chunk is one uninterruptible page task — so hand them over one by one.
+  const stopOnHit = settings.stopOnHit !== false && markers.some((m) => m && m.anchor);
   const sch = {
     tabId, urlKey, targetMs, timeText: settings.time,
     trusted: !!settings.trusted, clicks: plan.length, markers: markers.length,
-    chunks: BurstPlan.chunk(plan), span: BurstPlan.span(plan),
+    chunks: BurstPlan.chunk(plan, stopOnHit), span: BurstPlan.span(plan),
+    stopOnHit, prewarmMs: Math.max(PREWARM_MIN, +settings.prewarmMs || 0),
     armedAt: Date.now(), title: tab.title || tab.url
   };
 
@@ -234,6 +242,13 @@ async function fire(tabId, sch, reason) {
     if (!tab || keyOf(tab.url) !== sch.urlKey) {
       note = 'skipped — the tab navigated away from the page the markers belong to';
     } else {
+      // Everything that can be done before the instant is done before it: the
+      // page resolves each marker to its element, caches it and sends the hover
+      // half of the click, so T costs one press/release/click and nothing else.
+      await waitUntil(sch.targetMs - (sch.prewarmMs || PREWARM_MIN));
+      const pre = await send(tabId, { type: 'burstPrewarm' });
+      if (pre && pre.points) applyPoints(sch, pre.points);
+
       await waitUntil(sch.targetMs - SHIELD_LEAD);
       // Awaited: the page must be click-through before any real input lands.
       await send(tabId, { type: 'burstStart', clicks: sch.clicks, engine });
@@ -253,6 +268,7 @@ async function fire(tabId, sch, reason) {
       }
       fired = out.n;
       sample = out.sample;
+      if (out.stopped) note = note || 'stopped early — the target was gone after the click';
     }
   } catch (e) {
     note = String((e && e.message) || e);
@@ -276,6 +292,19 @@ async function fire(tabId, sch, reason) {
   return record;
 }
 
+// The page just told us where each marker's element actually is now. Trusted
+// clicks are dispatched at viewport coordinates by us, so they need the update;
+// synthetic clicks re-resolve in the page anyway.
+function applyPoints(sch, points) {
+  const by = new Map(points.map((p) => [p.i, p]));
+  for (const c of sch.chunks) {
+    for (const s of c.steps) {
+      const p = by.get(s.i);
+      if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) { s.x = p.x; s.y = p.y; }
+    }
+  }
+}
+
 async function fireTrusted(tabId, sch) {
   const pending = [];
   const dispatch = (params) => {
@@ -287,23 +316,62 @@ async function fireTrusted(tabId, sch) {
     dispatch({ type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
   };
 
-  const first = sch.chunks[0] && sch.chunks[0].steps[0];
-  if (first) dispatch({ type: 'mouseMoved', x: first.x, y: first.y, button: 'none', buttons: 0 });
+  const steps = [];
+  for (const c of sch.chunks) for (const s of c.steps) steps.push({ ...s, at: sch.targetMs + c.t + s.dt });
 
-  let n = 0;
-  for (const c of sch.chunks) {
-    for (const s of c.steps) {
-      await waitUntil(sch.targetMs + c.t + s.dt);
-      click(s.x, s.y);
-      n++;
+  // Park the cursor on the first target now, so the instant only carries the
+  // press and the release.
+  if (steps.length) dispatch({ type: 'mouseMoved', x: steps[0].x, y: steps[0].y, button: 'none', buttons: 0 });
+
+  // A trusted click goes to whatever pixel we name, so the first one gets its
+  // coordinates refreshed as late as we can afford. That is what catches a
+  // dialog which only opened in the last second.
+  if (sch.stopOnHit && steps.length && steps[0].at - Date.now() > 70) {
+    await waitUntil(steps[0].at - 60);
+    const g = await Promise.race([send(tabId, { type: 'guard', i: steps[0].i }), sleep(40).then(() => null)]);
+    if (g && g.ok && g.present && Number.isFinite(g.x) && (g.x !== steps[0].x || g.y !== steps[0].y)) {
+      steps[0].x = g.x;
+      steps[0].y = g.y;
+      dispatch({ type: 'mouseMoved', x: g.x, y: g.y, button: 'none', buttons: 0 });
     }
   }
+
+  let n = 0;
+  let stopped = false;
+  let at = steps.length ? { x: steps[0].x, y: steps[0].y } : null;
+
+  for (let k = 0; k < steps.length; k++) {
+    const s = steps[k];
+    await waitUntil(s.at);
+    if (!at || at.x !== s.x || at.y !== s.y) dispatch({ type: 'mouseMoved', x: s.x, y: s.y, button: 'none', buttons: 0 });
+    dispatch({ type: 'mousePressed', x: s.x, y: s.y, button: 'left', buttons: 1, clickCount: 1 });
+    dispatch({ type: 'mouseReleased', x: s.x, y: s.y, button: 'left', buttons: 0, clickCount: 1 });
+    at = { x: s.x, y: s.y };
+    n++;
+
+    const next = steps[k + 1];
+    if (!sch.stopOnHit || !next) continue;
+    // Ask the page, in the gap, whether the target is still there. A trusted
+    // click lands on whatever is under the pixel, so a retry after the dialog
+    // has closed would hit the page behind it.
+    const budget = Math.max(0, Math.min(40, next.at - Date.now() - 8));
+    const g = await Promise.race([send(tabId, { type: 'guard', i: next.i }), sleep(budget).then(() => null)]);
+    if (g && g.ok) {
+      if (!g.present) { stopped = true; break; }
+      if (Number.isFinite(g.x)) { next.x = g.x; next.y = g.y; }
+    }
+  }
+
   await Promise.all(pending);
-  return { n, sample: [{ ok: true, tag: `CDP dispatched ${n} trusted clicks` }] };
+  return {
+    n, stopped,
+    sample: [{ ok: true, tag: `CDP dispatched ${n} trusted click${n === 1 ? '' : 's'}${stopped ? ' — stopped, target gone' : ''}` }]
+  };
 }
 
 async function fireSynthetic(tabId, sch) {
   let n = 0;
+  let stopped = false;
   const sample = [];
   for (const c of sch.chunks) {
     const at = sch.targetMs + c.t;
@@ -313,8 +381,11 @@ async function fireSynthetic(tabId, sch) {
     const res = await send(tabId, { type: 'burstChunk', at, steps: c.steps });
     if (res && res.count) n += res.count;
     if (res && res.sample) for (const s of res.sample) if (sample.length < 12) sample.push(s);
+    // The page saw its own target disappear: the click landed, stop here rather
+    // than firing the rest into whatever took its place.
+    if (res && res.hit) { stopped = true; break; }
   }
-  return { n, sample };
+  return { n, stopped, sample };
 }
 
 // ---------------------------------------------------------------- scheduler

@@ -7,7 +7,10 @@ const DEFAULTS = {
   pattern: 'roundrobin',
   sustainMs: 0,
   sustainGapMs: 100,
-  trusted: false
+  trusted: false,
+  lockToElement: true,
+  stopOnHit: true,
+  prewarmMs: 600
 };
 
 const $ = (id) => document.getElementById(id);
@@ -205,6 +208,21 @@ document.addEventListener('click', async (e) => {
   }
 
   switch (t.id) {
+    case 'sync': {
+      status('Sampling the server clock — watch the in-page panel…');
+      await toTab('sync');
+      setTimeout(async () => { await refresh(); status(`Offset now ${settings.offsetMs}ms`); }, 2600);
+      break;
+    }
+    case 'single': {
+      settings.burstCount = 1;
+      settings.startDelayMs = 0;
+      await chrome.storage.local.set({ settings });
+      fillInputs();
+      paint();
+      status('Single click at the instant — no retries');
+      break;
+    }
     case 'place': await toTab('place'); await refresh(); status('Place mode — click the page'); break;
     case 'panel': await toTab('panel'); await refresh(); break;
     case 'clear': await toTab('clear'); await refresh(); status('Markers cleared'); break;

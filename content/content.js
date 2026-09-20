@@ -17,7 +17,10 @@
     pattern: 'roundrobin',
     sustainMs: 0,
     sustainGapMs: 100,
-    trusted: false
+    trusted: false,
+    lockToElement: true,
+    stopOnHit: true,
+    prewarmMs: 600
   };
 
   let settings = { ...DEFAULTS };
@@ -59,28 +62,205 @@
     return `${el.tagName.toLowerCase()}${id}${cls}${txt ? ` "${txt}"` : ''}`;
   }
 
-  function syntheticClick(x, y) {
-    const el = document.elementFromPoint(x, y);
-    if (!el) return { ok: false, tag: 'nothing at ' + x + ',' + y };
-    const base = {
-      bubbles: true, cancelable: true, composed: true, view: window,
-      clientX: x, clientY: y, screenX: x + window.screenX, screenY: y + window.screenY,
-      button: 0, detail: 1
-    };
-    const ptr = { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1, pressure: 0.5 };
-    const fire = (Ctor, type, init) => el.dispatchEvent(new Ctor(type, init));
+  // Our own overlay sits on top of the page, so a raw elementFromPoint during
+  // place mode would always answer "the Burst Clicker layer".
+  function elementUnder(x, y) {
+    const prev = host ? host.style.display : null;
+    if (host) host.style.display = 'none';
+    let el = null;
+    try { el = document.elementFromPoint(x, y); } catch {}
+    if (host) host.style.display = prev || '';
+    return el;
+  }
 
-    fire(PointerEvent, 'pointerover', { ...ptr, buttons: 0 });
-    fire(MouseEvent, 'mouseover', { ...base, buttons: 0 });
-    fire(PointerEvent, 'pointermove', { ...ptr, buttons: 0 });
-    fire(MouseEvent, 'mousemove', { ...base, buttons: 0 });
+  const textOf = (el) => (el ? (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60) : '');
+
+  function isVisible(el) {
+    if (!el || el.nodeType !== 1 || !el.isConnected) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    if (r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) return false;
+    const st = getComputedStyle(el);
+    return st.visibility !== 'hidden' && st.display !== 'none' && +st.opacity > 0.01;
+  }
+
+  function cssPath(el) {
+    const esc = (v) => (window.CSS && CSS.escape ? CSS.escape(v) : String(v).replace(/[^\w-]/g, '\\$&'));
+    const parts = [];
+    let node = el;
+    for (let d = 0; node && node.nodeType === 1 && d < 6; d++) {
+      if (node.id) {
+        let unique = false;
+        try { unique = document.querySelectorAll('#' + esc(node.id)).length === 1; } catch {}
+        if (unique) { parts.unshift('#' + esc(node.id)); break; }
+      }
+      let sel = node.tagName.toLowerCase();
+      const cls = (typeof node.className === 'string' ? node.className : '').trim()
+        .split(/\s+/).filter((c) => c && c.length < 40 && !/^(hover|active|focus|focused|selected)$/i.test(c))
+        .slice(0, 3);
+      if (cls.length) sel += '.' + cls.map(esc).join('.');
+      const parent = node.parentElement;
+      if (parent) {
+        const sibs = [...parent.children].filter((c) => c.tagName === node.tagName);
+        if (sibs.length > 1) sel += `:nth-of-type(${sibs.indexOf(node) + 1})`;
+      }
+      parts.unshift(sel);
+      node = node.parentElement;
+    }
+    return parts.join(' > ');
+  }
+
+  const CLICKABLE = 'button, a, [role="button"], input[type="submit"], input[type="button"], [onclick]';
+
+  // What the marker is really pointing at: the button, not the label inside it.
+  // Stored with the click point as a ratio of the box, so the marker follows
+  // that element when the dialog re-centres or the window is resized.
+  function anchorFor(el, x, y) {
+    if (!el || el.nodeType !== 1) return null;
+    const hit = el.closest(CLICKABLE) || el;
+    const r = hit.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    return {
+      sel: cssPath(hit), tag: hit.tagName.toLowerCase(), text: textOf(hit),
+      w: Math.round(r.width), h: Math.round(r.height),
+      rx: clamp((x - r.left) / r.width, 0, 1),
+      ry: clamp((y - r.top) / r.height, 0, 1)
+    };
+  }
+
+  function byText(a) {
+    if (!a.text) return null;
+    let best = null, score = Infinity;
+    let list = [];
+    try { list = document.querySelectorAll((a.tag ? a.tag + ',' : '') + CLICKABLE); } catch { return null; }
+    for (const el of list) {
+      if (textOf(el) !== a.text || !isVisible(el)) continue;
+      const r = el.getBoundingClientRect();
+      const s = Math.abs(r.width - a.w) + Math.abs(r.height - a.h);
+      if (s < score) { best = el; score = s; }
+    }
+    return best;
+  }
+
+  // Selector first (exact), then the same visible text — a re-rendered dialog
+  // usually keeps its label even when generated class names change.
+  function resolveAnchor(m) {
+    const a = m && m.anchor;
+    if (!a) return null;
+    let el = null;
+    try { if (a.sel) el = document.querySelector(a.sel); } catch {}
+    if (!isVisible(el) || (a.text && textOf(el) !== a.text)) el = byText(a) || (isVisible(el) ? el : null);
+    if (!isVisible(el)) return null;
+    return { el, ...pointIn(el, a, m) };
+  }
+
+  function pointIn(el, a, m) {
+    const r = el.getBoundingClientRect();
+    let x = Math.round(clamp(r.left + a.rx * r.width, r.left + 1, r.right - 1));
+    let y = Math.round(clamp(r.top + a.ry * r.height, r.top + 1, r.bottom - 1));
+    // Nothing moved: keep the exact pixel the user placed.
+    if (m && Math.abs(x - m.x) <= 2 && Math.abs(y - m.y) <= 2) { x = m.x; y = m.y; }
+    return { x, y };
+  }
+
+  // Resolved targets, primed ahead of the instant so that at T there is no
+  // hit-test, no hover work and no layout read left to do.
+  const warm = new Map();
+  let burstRun = { clicks: 0 };
+
+  function pointFor(step) {
+    const i = step && step.i;
+    const m = (i != null && markers[i]) ? markers[i] : null;
+    const w = warm.get(i);
+    if (w && isVisible(w.el)) {
+      const a = m && m.anchor;
+      return a ? { el: w.el, ...pointIn(w.el, a, m), primed: true } : { el: w.el, x: w.x, y: w.y, primed: true };
+    }
+    if (m && m.anchor) {
+      const got = resolveAnchor(m);
+      if (got) { warm.set(i, got); return { ...got, primed: false }; }
+      // The anchor is gone. After a click has landed that means the dialog
+      // closed — the burst is done. Before any click it means the page is not
+      // in the expected state, so fall back to the pixel the marker was placed on.
+      return burstRun.clicks ? { missing: true } : { el: null, x: step.x, y: step.y, primed: false };
+    }
+    return { el: null, x: step.x, y: step.y, primed: false };
+  }
+
+  const evBase = (x, y) => ({
+    bubbles: true, cancelable: true, composed: true, view: window,
+    clientX: x, clientY: y, screenX: x + window.screenX, screenY: y + window.screenY,
+    button: 0, detail: 1
+  });
+  const evPtr = (base) => ({ ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1, pressure: 0.5 });
+
+  function primeHover(el, x, y) {
+    if (!el || !el.isConnected) return;
+    const base = evBase(x, y);
+    const ptr = evPtr(base);
+    try {
+      el.dispatchEvent(new PointerEvent('pointerover', { ...ptr, buttons: 0 }));
+      el.dispatchEvent(new MouseEvent('mouseover', { ...base, buttons: 0 }));
+      el.dispatchEvent(new PointerEvent('pointermove', { ...ptr, buttons: 0 }));
+      el.dispatchEvent(new MouseEvent('mousemove', { ...base, buttons: 0 }));
+    } catch {}
+  }
+
+  // primed = the hover half of the sequence already went out before the instant,
+  // so only press → release → click is left to do at T.
+  function syntheticClick(x, y, el, primed) {
+    let target = el && el.isConnected ? el : document.elementFromPoint(x, y);
+    if (target && host && host.contains(target)) target = elementUnder(x, y);
+    if (!target) return { ok: false, tag: 'nothing at ' + x + ',' + y };
+    const base = evBase(x, y);
+    const ptr = evPtr(base);
+    const fire = (Ctor, type, init) => target.dispatchEvent(new Ctor(type, init));
+
+    if (!primed) {
+      fire(PointerEvent, 'pointerover', { ...ptr, buttons: 0 });
+      fire(MouseEvent, 'mouseover', { ...base, buttons: 0 });
+      fire(PointerEvent, 'pointermove', { ...ptr, buttons: 0 });
+      fire(MouseEvent, 'mousemove', { ...base, buttons: 0 });
+    }
     fire(PointerEvent, 'pointerdown', { ...ptr, buttons: 1 });
     fire(MouseEvent, 'mousedown', { ...base, buttons: 1 });
-    if (typeof el.focus === 'function') { try { el.focus({ preventScroll: true }); } catch {} }
+    if (typeof target.focus === 'function') { try { target.focus({ preventScroll: true }); } catch {} }
     fire(PointerEvent, 'pointerup', { ...ptr, buttons: 0, pressure: 0 });
     fire(MouseEvent, 'mouseup', { ...base, buttons: 0 });
     const notCancelled = fire(MouseEvent, 'click', { ...base, buttons: 0 });
-    return { ok: true, tag: describe(el), defaultPrevented: !notCancelled };
+    return { ok: true, tag: describe(target), defaultPrevented: !notCancelled };
+  }
+
+  // Resolve every marker, cache the element, and send the hover events now, so
+  // the instant itself costs one press/release/click and nothing else.
+  function prewarm() {
+    warm.clear();
+    burstRun = { clicks: 0 };
+    shield(true);
+    const points = [];
+    markers.forEach((m, i) => {
+      const got = m.anchor ? resolveAnchor(m) : null;
+      const x = got ? got.x : m.x;
+      const y = got ? got.y : m.y;
+      const el = got ? got.el : elementUnder(x, y);
+      if (el) warm.set(i, { el, x, y });
+      primeHover(el, x, y);
+      points.push({ i, x, y, anchored: !!got, tag: describe(el) });
+    });
+    return points;
+  }
+
+  // Cheap live check used between clicks: is the target still there, and where?
+  function guard(i) {
+    if (i == null) return { present: true };
+    const m = markers[i];
+    if (!m) return { present: false };
+    if (!m.anchor) return { present: true, x: m.x, y: m.y };
+    const w = warm.get(i);
+    if (w && isVisible(w.el)) return { present: true, ...pointIn(w.el, m.anchor, m) };
+    const got = resolveAnchor(m);
+    if (got) { warm.set(i, got); return { present: true, x: got.x, y: got.y }; }
+    return { present: false };
   }
 
   // Timers are throttled in hidden tabs; a synchronous spin is not. Chunks are
@@ -96,14 +276,18 @@
     const sample = [];
     const base = performance.now();
     let count = 0;
+    let hit = false;
     for (const s of steps) {
       const due = base + (s.dt || 0);
       while (performance.now() < due) { /* spin */ }
-      const r = syntheticClick(s.x, s.y);
+      const pt = pointFor(s);
+      if (pt.missing) { hit = true; break; }
+      const r = syntheticClick(pt.x, pt.y, pt.el, pt.primed);
+      burstRun.clicks++;
       if (sample.length < 12) sample.push(r);
       count++;
     }
-    return { count, sample };
+    return { count, sample, hit };
   }
 
   // ------------------------------------------------------------------ arming
@@ -132,6 +316,43 @@
     schedule = res.schedule;
     status('Test burst in ~1s…');
     render();
+  }
+
+  // The instant that matters is the SERVER's 1 pm, not this laptop's. The Date
+  // response header only has second resolution, so we sample until it ticks over
+  // and bracket the moment the server crossed a second; that brackets the skew
+  // to the sampling gap. The result is written to offsetMs.
+  async function syncClock() {
+    const GAP = 100;
+    const MAX = 14;
+    status('Sampling the server clock…');
+    let prevSec = null, prevAt = null;
+    for (let i = 0; i < MAX; i++) {
+      const t0 = Date.now();
+      let hdr = null;
+      try {
+        const res = await fetch(location.href, { method: 'HEAD', cache: 'no-store' });
+        hdr = res.headers.get('date');
+      } catch {}
+      const t1 = Date.now();
+      if (!hdr) { status('no Date header from this server — offset left alone', true); return; }
+      const sec = Date.parse(hdr);
+      const mid = (t0 + t1) / 2;
+      if (prevSec != null && sec !== prevSec) {
+        // The server crossed into `sec` somewhere between prevAt and mid.
+        const localAtFlip = (prevAt + mid) / 2;
+        const skew = Math.round(sec - localAtFlip);          // server ahead of us by this much
+        const uncertainty = Math.round((mid - prevAt) / 2);
+        settings.offsetMs = -skew;                            // fire that much earlier
+        saveSettings();
+        status(`Server clock is ${skew >= 0 ? '+' : ''}${skew}ms vs this Mac (±${uncertainty}) · offset set to ${-skew}ms`);
+        render();
+        return;
+      }
+      prevSec = sec; prevAt = mid;
+      await new Promise((r) => setTimeout(r, GAP));
+    }
+    status('could not catch the server second ticking over — try again', true);
   }
 
   function startKeepalive() {
@@ -192,6 +413,12 @@
     .st { font-size: 10px; color: #94a3b8; min-height: 13px; text-align: center; }
     .st.err { color: #fb7185; }
     .hint { font-size: 10px; color: #475569; text-align: center; }
+    .opts { gap: 10px; justify-content: center; }
+    .ck { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #94a3b8;
+          text-transform: none; letter-spacing: 0; cursor: pointer; }
+    .ck input { width: 12px; height: 12px; margin: 0; accent-color: #0e7490; }
+    .mk.lock { border-color: #22c55e; background: rgba(34,197,94,.16); }
+    .mk.lock::after { background: #22c55e; }
   `;
 
   let host, root, captureEl, panelEl, cdEl, subEl, stEl, mkWrap;
@@ -227,9 +454,14 @@
               <div class="f"><label>Clicks / marker</label><input data-k="burstCount" type="number" min="1"></div>
               <div class="f"><label>Gap ms</label><input data-k="burstIntervalMs" type="number" min="0"></div>
             </div>
+            <div class="row opts">
+              <label class="ck"><input type="checkbox" data-k="lockToElement"> lock to element</label>
+              <label class="ck"><input type="checkbox" data-k="stopOnHit"> stop on hit</label>
+            </div>
             <div class="row">
               <button data-a="place">◎ Place</button>
               <button data-a="clear">Clear</button>
+              <button data-a="sync">⟳ Sync</button>
               <button data-a="test">Test</button>
             </div>
             <div class="row"><button class="p" data-a="arm">Arm</button></div>
@@ -269,6 +501,7 @@
       case 'close': setPanel(false); break;
       case 'place': setPlaceMode(!placeMode); break;
       case 'clear': clearMarkers(); break;
+      case 'sync': syncClock(); break;
       case 'test': testNow(); break;
       case 'arm': schedule ? disarm() : arm(); break;
     }
@@ -277,7 +510,9 @@
   function onUIChange(e) {
     const k = e.target.dataset.k;
     if (!k) return;
-    let v = e.target.type === 'number' ? num(e.target.value, DEFAULTS[k]) : e.target.value;
+    let v = e.target.type === 'checkbox' ? !!e.target.checked
+      : e.target.type === 'number' ? num(e.target.value, DEFAULTS[k])
+      : e.target.value;
     if (k === 'time') v = BurstTime.canonical(v) || v;
     settings[k] = v;
     saveSettings();
@@ -297,10 +532,22 @@
     if (!placeMode) return;
     e.preventDefault();
     e.stopPropagation();
-    markers.push({ id: Date.now() + Math.random(), x: Math.round(e.clientX), y: Math.round(e.clientY) });
+    markers.push(makeMarker(Math.round(e.clientX), Math.round(e.clientY)));
     saveMarkers();
-    status(`${markers.length} marker${markers.length > 1 ? 's' : ''} placed`);
+    const m = markers[markers.length - 1];
+    status(m.anchor
+      ? `Marker ${markers.length} locked to <${m.anchor.tag}>${m.anchor.text ? ' "' + m.anchor.text.slice(0, 20) + '"' : ''}`
+      : `${markers.length} marker${markers.length > 1 ? 's' : ''} placed`);
     render();
+  }
+
+  function makeMarker(x, y) {
+    const m = { id: Date.now() + Math.random(), x, y };
+    if (settings.lockToElement !== false) {
+      const a = anchorFor(elementUnder(x, y), x, y);
+      if (a) m.anchor = a;
+    }
+    return m;
   }
 
   function onPanelDrag(e) {
@@ -356,6 +603,11 @@
       const up = () => {
         removeEventListener('pointermove', move);
         removeEventListener('pointerup', up);
+        delete m.anchor;
+        if (settings.lockToElement !== false) {
+          const a = anchorFor(elementUnder(m.x, m.y), m.x, m.y);
+          if (a) m.anchor = a;
+        }
         saveMarkers();
         if (schedule) { status('Markers moved — re-arm to use the new spots', true); disarm(); }
       };
@@ -382,17 +634,20 @@
     mkWrap.textContent = '';
     markers.forEach((m, i) => {
       const el = document.createElement('div');
-      el.className = 'mk' + (placeMode ? ' grab' : '');
+      el.className = 'mk' + (placeMode ? ' grab' : '') + (m.anchor ? ' lock' : '');
       el.style.left = m.x + 'px';
       el.style.top = m.y + 'px';
+      el.title = m.anchor ? `locked to <${m.anchor.tag}> ${m.anchor.text}` : 'fixed spot';
       el.textContent = String(i + 1);
       markerDrag(el, m);
       mkWrap.appendChild(el);
     });
+    followAnchors();
 
     for (const inp of root.querySelectorAll('[data-k]')) {
       if (root.activeElement === inp) continue;
-      inp.value = settings[inp.dataset.k];
+      if (inp.type === 'checkbox') inp.checked = settings[inp.dataset.k] !== false;
+      else inp.value = settings[inp.dataset.k];
     }
 
     const btn = root.querySelector('[data-a="arm"]');
@@ -405,8 +660,26 @@
     tickCountdown();
   }
 
+  // An anchored marker is drawn where its element is now, not where it was
+  // dropped, so you can see it still sitting on the button.
+  let followTick = 0;
+  function followAnchors() {
+    if (!mkWrap || !markers.some((m) => m.anchor)) return;
+    const dots = mkWrap.children;
+    markers.forEach((m, i) => {
+      const dot = dots[i];
+      if (!dot || !m.anchor || placeMode) return;
+      const got = resolveAnchor(m);
+      if (!got) { dot.style.opacity = '.35'; return; }
+      dot.style.opacity = '';
+      dot.style.left = got.x + 'px';
+      dot.style.top = got.y + 'px';
+    });
+  }
+
   function tickCountdown() {
     if (!cdEl) return;
+    if (++followTick % 5 === 0 && (panelOpen || placeMode)) followAnchors();
     if (schedule) {
       cdEl.classList.remove('idle');
       cdEl.textContent = fmtDelta(schedule.targetMs - Date.now());
@@ -459,6 +732,22 @@
       case 'place': setPlaceMode(msg.on === undefined ? !placeMode : msg.on); setPanel(true); reply({ ok: true }); return true;
       case 'clear': clearMarkers(); reply({ ok: true }); return true;
 
+      case 'burstPrewarm': {
+        setPlaceMode(false);
+        shield(true);
+        reply({ ok: true, points: prewarm() });
+        return true;
+      }
+
+      case 'sync':
+        syncClock();
+        reply({ ok: true });
+        return true;
+
+      case 'guard':
+        reply({ ok: true, ...guard(msg.i) });
+        return true;
+
       case 'burstStart':
         setPlaceMode(false);
         shield(true);
@@ -474,6 +763,8 @@
 
       case 'burstEnd':
         shield(false);
+        warm.clear();
+        burstRun = { clicks: 0 };
         schedule = null;
         stopKeepalive();
         status(msg.record

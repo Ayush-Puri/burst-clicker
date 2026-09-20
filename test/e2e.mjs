@@ -1,7 +1,7 @@
 // End-to-end check for Burst Clicker against a real Chrome.
 //
 //   node test/e2e.mjs              # every suite
-//   node test/e2e.mjs input        # one suite: input | visible | hidden | multi
+//   node test/e2e.mjs input        # one suite: input | visible | anchor | hidden | multi | evict
 //
 // Chrome 151 ignores --load-extension, so the extension is installed with the
 // browser-level CDP command Extensions.loadUnpacked, which needs
@@ -27,6 +27,7 @@ const PORT = 8099;
 const CDP_PORT = 9333;
 const url = (p) => `http://127.0.0.1:${PORT}/${p}`;
 const PAGE_URL = url('page.html');
+const DIALOG_URL = url('dialog.html');
 const only = process.argv[2];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -473,12 +474,220 @@ async function testEviction(browser, extId) {
   sw.close();
 }
 
+// ------------------------------------------------- 6: locked markers
+
+async function attachTo(extId, pageUrl) {
+  const target = await waitFor(async () =>
+    (await targetsOf('page')).find((t) => t.url === pageUrl), 20000, 'target ' + pageUrl);
+  const page = await Client.open(target.webSocketDebuggerUrl);
+  await page.send('Runtime.enable');
+  await page.send('Page.enable');
+  await page.send('Page.reload', { ignoreCache: true });
+  await waitFor(() => page.events.some((e) => e.method === 'Page.loadEventFired'), 20000, 'page load');
+  await sleep(900);
+  await page.send('Runtime.disable');
+  page.events.length = 0;
+  await page.send('Runtime.enable');
+  const ctx = await waitFor(() => {
+    const evs = page.events.filter((e) => e.method === 'Runtime.executionContextCreated'
+      && e.params.context.origin === `chrome-extension://${extId}`);
+    return evs.length ? evs[evs.length - 1].params.context : null;
+  }, 20000, 'content-script world');
+  return { page, ctxId: ctx.id };
+}
+
+const cfgFor = (timeStr, extra) => JSON.stringify({
+  time: timeStr, offsetMs: 0, startDelayMs: 0, burstCount: 4, burstIntervalMs: 25,
+  pattern: 'roundrobin', sustainMs: 0, sustainGapMs: 100, trusted: false,
+  lockToElement: true, stopOnHit: true, prewarmMs: 600, ...extra
+});
+
+// The real case this was built for: a confirm dialog that is centred, may move,
+// and disappears the moment the click lands.
+async function testAnchor(sw, extId) {
+  console.log('\n[6] markers locked to an element — a dialog that moves, one click that lands');
+
+  const tabId = await sw.eval(
+    `chrome.tabs.create({ url: '` + DIALOG_URL + `', active: true }).then(t => t.id)`);
+  await sleep(1200);
+  const { page, ctxId } = await attachTo(extId, DIALOG_URL);
+
+  const armAt = timeIn(7);
+  await sw.eval(`chrome.storage.local.set({ settings: ${cfgFor(armAt.str)} })`);
+  await sleep(400);
+
+  const placed = await page.eval(`(() => {
+    const r = document.getElementById('yes').getBoundingClientRect();
+    const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+    const sr = document.getElementById('burst-clicker-root').shadowRoot;
+    sr.querySelector('[data-a="place"]').click();
+    sr.querySelector('.capture').dispatchEvent(new PointerEvent('pointerdown',
+      { clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    sr.querySelector('[data-a="place"]').click();
+    return { x, y };
+  })()`);
+
+  const key = 'markers:' + DIALOG_URL;
+  const mk = (await page.eval(`chrome.storage.local.get('${key}')`, ctxId))[key];
+  const anchor = mk && mk[0] && mk[0].anchor;
+  check('the marker locks onto the button under it',
+    !!anchor && anchor.tag === 'button' && anchor.text === 'Yes',
+    anchor ? `<${anchor.tag}> "${anchor.text}" via ${anchor.sel}` : 'no anchor stored');
+
+  const res = await sw.eval(`arm(${tabId})`);
+  check('armed the dialog tab', !!(res && res.ok), JSON.stringify(res && res.error));
+  const sch = await sw.eval(`getSchedules().then(a => a[${tabId}])`);
+  check('stop-on-hit splits the burst into one click per chunk',
+    !!sch && sch.stopOnHit === true && sch.chunks.length === sch.clicks,
+    sch && `${sch.chunks.length} chunks for ${sch.clicks} clicks`);
+
+  // Move the dialog AFTER arming: the coordinates are resolved at fire time.
+  await page.eval(`window.__shift(150, 60)`);
+
+  console.log(`      waiting ${Math.round(armAt.epoch - Date.now() + 1800)}ms for the burst…`);
+  await sleep(Math.max(0, armAt.epoch - Date.now() + 1800));
+
+  const hits = await page.eval('window.__hits');
+  const bg = await page.eval('window.__bg');
+  check('the moved button still got clicked', hits.length >= 1, `${hits.length} hits`);
+  if (hits.length) {
+    check('the click landed inside the button, not on its old pixel', hits[0].inside === true,
+      `click at ${hits[0].x},${hits[0].y} · marker was dropped at ${placed.x},${placed.y}`);
+    check('the marker followed the dialog', Math.abs(hits[0].x - placed.x) > 40,
+      `moved ${Math.abs(hits[0].x - placed.x)}px`);
+    const drift = hits[0].t - armAt.epoch;
+    check('first click within 50ms of the instant', Math.abs(drift) < 50, `drift ${drift.toFixed(1)}ms`);
+  }
+  check('one successful click ended the burst', hits.length === 1, `${hits.length} of 4 planned`);
+  check('no retry leaked onto the page behind the closed dialog', bg === 0, `${bg} background clicks`);
+
+  const runKey = 'lastrun:' + DIALOG_URL;
+  const run = (await page.eval(`chrome.storage.local.get('${runKey}')`, ctxId))[runKey];
+  check('the run is logged as a deliberate early stop',
+    !!run && run.clicks === 1 && /stopped early/.test(run.note || ''),
+    run && `${run.clicks}/${run.planned} · ${run.note}`);
+  check('the click is reported against the button it hit',
+    !!run && (run.sample || []).some((s) => /yes/i.test(s.tag || '')),
+    run && JSON.stringify((run.sample || [])[0]));
+
+  // Control: the same move with the lock off is exactly the miss this prevents.
+  const armB = timeIn(6);
+  await page.eval(`window.__reopen()`);
+  await sw.eval(`chrome.storage.local.remove(['${key}', '${runKey}'])`);
+  await sw.eval(`chrome.storage.local.set({ settings: ${cfgFor(armB.str, { lockToElement: false, burstCount: 1 })} })`);
+  await sleep(400);
+  await page.eval(`(() => {
+    const r = document.getElementById('yes').getBoundingClientRect();
+    const sr = document.getElementById('burst-clicker-root').shadowRoot;
+    sr.querySelector('[data-a="place"]').click();
+    sr.querySelector('.capture').dispatchEvent(new PointerEvent('pointerdown',
+      { clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2),
+        bubbles: true, cancelable: true }));
+    sr.querySelector('[data-a="place"]').click();
+  })()`);
+  const plain = (await page.eval(`chrome.storage.local.get('${key}')`, ctxId))[key];
+  check('with the lock off the marker is a bare coordinate', !!(plain && plain[0] && !plain[0].anchor));
+  await sw.eval(`arm(${tabId})`);
+  await page.eval(`window.__shift(260, 0)`);
+  await sleep(Math.max(0, armB.epoch - Date.now() + 1500));
+  const missed = await page.eval('window.__hits');
+  const missBg = await page.eval('window.__bg');
+  check('a fixed coordinate misses the dialog once it moves',
+    missed.length === 0 && missBg > 0, `${missed.length} hits, ${missBg} background clicks`);
+
+  page.close();
+  await sw.eval(`chrome.tabs.remove(${tabId}).catch(() => {})`);
+  await sw.eval(`chrome.storage.local.remove(['${key}', '${runKey}'])`);
+}
+
+// ------------------------------------------------- 7: locked + trusted + hidden
+
+// The hardest combination: a background tab, real trusted input dispatched by
+// the worker at viewport coordinates, and a target that moves and then vanishes.
+// No page client here — trusted mode needs chrome.debugger to itself.
+async function testAnchorTrusted(sw) {
+  console.log('\n[7] locked marker + trusted clicks + hidden tab');
+
+  const mKey = 'markers:' + DIALOG_URL;
+  const rKey = 'lastrun:' + DIALOG_URL;
+
+  const tabId = await sw.eval(
+    `chrome.tabs.create({ url: '` + DIALOG_URL + `', active: false }).then(t => t.id)`);
+  await sleep(1500);
+
+  const inMain = (body) => sw.eval(`chrome.scripting.executeScript({
+    target: { tabId: ${tabId} }, world: 'MAIN', func: () => (${body})
+  }).then(r => r[0].result)`);
+
+  const box = await inMain(`(() => { const r = document.getElementById('yes').getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2),
+             w: Math.round(r.width), h: Math.round(r.height) }; })()`);
+  check('found the dialog button in the background tab', !!(box && box.w > 0), JSON.stringify(box));
+
+  const armAt = timeIn(8);
+  const marker = JSON.stringify([{
+    id: 1, x: box.x, y: box.y,
+    anchor: { sel: '#yes', tag: 'button', text: 'Yes', w: box.w, h: box.h, rx: 0.5, ry: 0.5 }
+  }]);
+  await sw.eval(`chrome.storage.local.set({
+    settings: ${cfgFor(armAt.str, { trusted: true, burstCount: 3, burstIntervalMs: 40 })},
+    ${JSON.stringify(mKey)}: ${marker}
+  })`);
+
+  const res = await sw.eval(`arm(${tabId})`);
+  check('armed the hidden tab in trusted mode', !!(res && res.ok), JSON.stringify(res && res.error));
+
+  // Move it after arming, as a real dialog would move on a resize.
+  await inMain('window.__shift(120, 80)');
+
+  console.log(`      waiting ${Math.round(armAt.epoch - Date.now() + 2200)}ms for the burst…`);
+  await sleep(Math.max(0, armAt.epoch - Date.now() + 2200));
+
+  const t = parseTitle(await waitTitle(DIALOG_URL, 8000, 'trusted click on the moved dialog'));
+  check('the moved button was hit by real input', +t.HITS === 1 && +t.TR === 1, JSON.stringify(t));
+  check('it was hidden when it fired', t.V === 'hidden', t.V);
+  check('the two spare clicks never reached the page behind it', +t.BG === 0, `BG=${t.BG}`);
+  const drift = +t.T0 - armAt.epoch;
+  check('trusted click within 50ms of the instant', Math.abs(drift) < 50, `drift ${drift}ms`);
+
+  const run = await sw.eval(`chrome.storage.local.get(${JSON.stringify(rKey)}).then(g => g[${JSON.stringify(rKey)}])`);
+  check('the trusted run stopped itself after the hit',
+    !!run && run.clicks === 1 && /stopped/.test((run.note || '') + (run.sample || []).map((x) => x.tag).join('')),
+    run && `${run.clicks}/${run.planned} · ${run.engine} · ${run.note}`);
+
+  // Phase 2: the dialog is not even on screen when the burst is prepared — it
+  // opens, moved, a few hundred ms before the instant. Only a late re-resolve
+  // can hit it.
+  const lateAt = timeIn(9);
+  await sw.eval(`chrome.storage.local.set({
+    settings: ${cfgFor(lateAt.str, { trusted: true, burstCount: 3, burstIntervalMs: 40 })},
+    ${JSON.stringify(mKey)}: ${marker}
+  })`);
+  const res2 = await sw.eval(`arm(${tabId})`);
+  check('armed with no dialog on screen at all', !!(res2 && res2.ok), JSON.stringify(res2 && res2.error));
+
+  await sleep(Math.max(0, lateAt.epoch - 450 - Date.now()));
+  const opened = await inMain('(() => { const ok = window.__reopen(); window.__shift(120, 80); return ok; })()');
+  check('the dialog opened late, after the burst was already prepared', opened === true, String(opened));
+
+  await sleep(Math.max(0, lateAt.epoch - Date.now() + 2200));
+  const t2 = parseTitle(await waitTitle(DIALOG_URL, 8000, 'trusted click on the late dialog'));
+  check('the late dialog was still hit on the instant', +t2.HITS === 1 && +t2.TR === 1, JSON.stringify(t2));
+  check('nothing was clicked behind the late dialog', +t2.BG === 0, `BG=${t2.BG}`);
+  const lateDrift = +t2.T0 - lateAt.epoch;
+  check('late dialog click within 50ms of the instant', Math.abs(lateDrift) < 50, `drift ${lateDrift}ms`);
+
+  await sw.eval(`chrome.tabs.remove(${tabId}).catch(() => {})`);
+  await sw.eval(`chrome.storage.local.remove([${JSON.stringify(mKey)}, ${JSON.stringify(rKey)}])`);
+}
+
 // ------------------------------------------------- harness
 
 async function main() {
   const server = createServer((req, res) => {
+    const file = req.url.startsWith('/dialog') ? 'dialog.html' : 'page.html';
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-    res.end(readFileSync(join(HERE, 'page.html')));
+    res.end(readFileSync(join(HERE, file)));
   }).listen(PORT);
 
   const profile = mkdtempSync(join(tmpdir(), 'burst-e2e-'));
@@ -543,6 +752,8 @@ async function main() {
       await sleep(700);
     }
 
+    if (!only || only === 'anchor') { await testAnchor(sw, extId); await testAnchorTrusted(sw); }
+    if (only === 'trusted-anchor') await testAnchorTrusted(sw);
     if (!only || only === 'hidden') await testHidden(sw);
     if (!only || only === 'multi') await testMulti(sw);
     if (!only || only === 'evict') {

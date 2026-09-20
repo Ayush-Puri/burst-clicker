@@ -43,6 +43,7 @@
       <button class="link" data-in="30">+30s</button>
       <button class="link" data-in="60">+1m</button>
       <button class="link" data-in="300">+5m</button>
+      <button class="link" id="sync">⟳ sync to server clock</button>
     </div>
 
     <h2>Burst</h2>
@@ -73,6 +74,25 @@
     </section>
 
     <label class="toggle">
+      <input id="lockToElement" data-k="lockToElement" type="checkbox">
+      <span>
+        <b>Lock markers to the element under them</b>
+        <em>The marker remembers the button it was dropped on and clicks wherever that
+        button is at fire time — so a centred dialog still gets hit after a resize.</em>
+      </span>
+    </label>
+
+    <label class="toggle">
+      <input id="stopOnHit" data-k="stopOnHit" type="checkbox">
+      <span>
+        <b>Stop as soon as the click lands</b>
+        <em>Checks between clicks whether the locked element is still there. One
+        successful click ends the burst, so retries can never hit the page behind a
+        dialog that just closed.</em>
+      </span>
+    </label>
+
+    <label class="toggle">
       <input id="trusted" data-k="trusted" type="checkbox">
       <span>
         <b>Trusted clicks (DevTools protocol)</b>
@@ -87,10 +107,11 @@
       <button id="place" class="b">◎ Place markers</button>
       <button id="panel" class="b">Panel</button>
       <button id="clear" class="b">Clear</button>
+      <button id="single" class="b">1 click</button>
     </div>
     <p class="hint">Place mode: click the page to drop a marker · drag to move ·
-      right-click to delete · Esc to exit. Markers are viewport coordinates, saved per
-      page URL.</p>
+      right-click to delete · Esc to exit. A marker locks onto the button under it
+      (green ring) and falls back to its viewport coordinates. Saved per page URL.</p>
 
     <div class="row main-row">
       <button id="arm" class="b primary">Arm this tab</button>
