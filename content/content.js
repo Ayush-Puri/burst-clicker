@@ -20,7 +20,14 @@
     trusted: false,
     lockToElement: true,
     stopOnHit: true,
-    prewarmMs: 600
+    prewarmMs: 600,
+    autoYes: true,
+    yesText: 'Yes',
+    autoWindowMs: 3000,
+    useSchedule: true,
+    weekdayTime: '13:00:00.000',
+    weekendTime: '10:00:00.000',
+    autoSync: true
   };
 
   let settings = { ...DEFAULTS };
@@ -142,9 +149,61 @@
     return best;
   }
 
+  // Auto-Yes: set at prewarm to the (lower-case) label to hunt for. While set, one
+  // virtual marker stands in for every placed one and resolves by scanning the page.
+  let autoYes = null;
+  const AUTO_MARKER = { x: -1, y: -1, auto: true };
+  const markerAt = (i) => (autoYes ? AUTO_MARKER : markers[i]);
+  const markerList = () => (autoYes ? [AUTO_MARKER] : markers);
+
+  const YES_FAST = 'button, a, [role="button"], [role="option"], [role="radio"], input[type="submit"], ' +
+                   'input[type="button"], [onclick], label';
+  const YES_WIDE = 'span, div, li, td, p';
+
+  function yesMatch(el, want) {
+    const raw = el.tagName === 'INPUT' ? (el.value || '') : (el.textContent || '');
+    return raw.trim().replace(/\s+/g, ' ').toLowerCase().replace(/[.!]+$/, '') === want;
+  }
+
+  // The first visible, enabled element whose whole label is the word. Buttons and
+  // links are tried first; plain spans/divs only if there is no real control.
+  // Several matches (one per lead): the top-most, then left-most, wins.
+  // anyState: also accept a disabled Yes — for the preview, which should say
+  // "found, waiting for it to enable" rather than "not found".
+  function findYes(want = autoYes, anyState = false) {
+    if (!want) return null;
+    for (const sel of [YES_FAST, YES_WIDE]) {
+      let list;
+      try { list = [...document.querySelectorAll(sel)]; } catch { continue; }
+      const hits = list.filter((el) =>
+        !(host && host.contains(el)) &&
+        (anyState || (!el.disabled && el.getAttribute('aria-disabled') !== 'true')) &&
+        isVisible(el) && yesMatch(el, want));
+      // A wrapper that merely contains the real "Yes" control is not a second hit.
+      const inner = hits.filter((el) => !hits.some((o) => o !== el && el.contains(o)));
+      if (!inner.length) continue;
+      let best = null, bt = Infinity, bl = Infinity;
+      for (const el of inner) {
+        const r = el.getBoundingClientRect();
+        if (r.top < bt - 2 || (Math.abs(r.top - bt) <= 2 && r.left < bl)) { best = el; bt = r.top; bl = r.left; }
+      }
+      return best;
+    }
+    return null;
+  }
+
+  function centreOf(el) {
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  }
+
   // Selector first (exact), then the same visible text — a re-rendered dialog
   // usually keeps its label even when generated class names change.
   function resolveAnchor(m) {
+    if (m && m.auto) {
+      const el = findYes();
+      return el ? { el, ...centreOf(el) } : null;
+    }
     const a = m && m.anchor;
     if (!a) return null;
     let el = null;
@@ -170,11 +229,19 @@
 
   function pointFor(step) {
     const i = step && step.i;
-    const m = (i != null && markers[i]) ? markers[i] : null;
+    const m = i != null ? markerAt(i) || null : null;
     const w = warm.get(i);
     if (w && isVisible(w.el)) {
+      if (m && m.auto) return { el: w.el, ...centreOf(w.el), primed: true };
       const a = m && m.anchor;
       return a ? { el: w.el, ...pointIn(w.el, a, m), primed: true } : { el: w.el, x: w.x, y: w.y, primed: true };
+    }
+    if (m && m.auto) {
+      const got = resolveAnchor(m);
+      if (got) { warm.set(i, got); return { ...got, primed: false }; }
+      // No Yes yet: keep looking until one shows up. Once a click has landed, the
+      // lead is taken and the burst is over.
+      return burstRun.clicks ? { missing: true } : { wait: true };
     }
     if (m && m.anchor) {
       const got = resolveAnchor(m);
@@ -238,12 +305,15 @@
     burstRun = { clicks: 0 };
     shield(true);
     const points = [];
-    markers.forEach((m, i) => {
-      const got = m.anchor ? resolveAnchor(m) : null;
+    markerList().forEach((m, i) => {
+      const got = m.anchor || m.auto ? resolveAnchor(m) : null;
       const x = got ? got.x : m.x;
       const y = got ? got.y : m.y;
       const el = got ? got.el : elementUnder(x, y);
-      if (el) warm.set(i, { el, x, y });
+      // A locked marker whose element is not there yet must not cache whatever
+      // happens to be under its pixel — the check at fire time would then aim
+      // at that instead of the dialog that opens in the last moment.
+      if (el && (got || !(m.anchor || m.auto))) warm.set(i, { el, x, y });
       primeHover(el, x, y);
       points.push({ i, x, y, anchored: !!got, tag: describe(el) });
     });
@@ -253,8 +323,15 @@
   // Cheap live check used between clicks: is the target still there, and where?
   function guard(i) {
     if (i == null) return { present: true };
-    const m = markers[i];
+    const m = markerAt(i);
     if (!m) return { present: false };
+    if (m.auto) {
+      const w = warm.get(i);
+      if (w && isVisible(w.el)) return { present: true, ...centreOf(w.el) };
+      const got = resolveAnchor(m);
+      if (got) { warm.set(i, got); return { present: true, x: got.x, y: got.y }; }
+      return { present: false };
+    }
     if (!m.anchor) return { present: true, x: m.x, y: m.y };
     const w = warm.get(i);
     if (w && isVisible(w.el)) return { present: true, ...pointIn(w.el, m.anchor, m) };
@@ -272,6 +349,8 @@
 
   function runChunk(at, steps) {
     shield(true);
+    // How early the chunk arrived: below zero means the click was already late.
+    const lead = Number.isFinite(at) ? at - Date.now() : null;
     if (Number.isFinite(at)) spinUntil(at);
     const sample = [];
     const base = performance.now();
@@ -282,18 +361,20 @@
       while (performance.now() < due) { /* spin */ }
       const pt = pointFor(s);
       if (pt.missing) { hit = true; break; }
+      if (pt.wait) continue;
       const r = syntheticClick(pt.x, pt.y, pt.el, pt.primed);
       burstRun.clicks++;
       if (sample.length < 12) sample.push(r);
       count++;
+      if (autoYes) { hit = true; break; }   // one lead, one click — never a second
     }
-    return { count, sample, hit };
+    return { count, sample, hit, lead };
   }
 
   // ------------------------------------------------------------------ arming
 
   async function arm() {
-    if (!markers.length) { status('Place at least one marker first', true); return; }
+    if (!markers.length && settings.autoYes === false) { status('Place at least one marker first', true); return; }
     const res = await ask({ type: 'arm' });
     if (!res || !res.ok) { status((res && res.error) || 'could not arm', true); return; }
     schedule = res.schedule;
@@ -419,9 +500,52 @@
     .ck input { width: 12px; height: 12px; margin: 0; accent-color: #0e7490; }
     .mk.lock { border-color: #22c55e; background: rgba(34,197,94,.16); }
     .mk.lock::after { background: #22c55e; }
+    .pv-ring { position: absolute; display: none; box-sizing: border-box; border: 3px solid #22c55e;
+               border-radius: 8px; box-shadow: 0 0 0 4px rgba(34,197,94,.25), 0 0 18px rgba(34,197,94,.55);
+               pointer-events: none; animation: pv 1.4s ease-in-out infinite; }
+    @keyframes pv { 50% { box-shadow: 0 0 0 8px rgba(34,197,94,.12), 0 0 26px rgba(34,197,94,.7); } }
+    .pv-tag { position: absolute; display: none; white-space: nowrap; pointer-events: none;
+              background: #14532d; color: #dcfce7; border: 1px solid #22c55e; border-radius: 6px;
+              padding: 3px 7px; font: 600 11px/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
+              box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+    .pv-ring.wait { border-color: #f59e0b; box-shadow: 0 0 0 4px rgba(245,158,11,.25); }
+    .pv-tag.miss { background: #713f12; color: #fef3c7; border-color: #f59e0b; }
   `;
 
-  let host, root, captureEl, panelEl, cdEl, subEl, stEl, mkWrap;
+  let host, root, captureEl, panelEl, cdEl, subEl, stEl, mkWrap, pvRing, pvTag;
+
+  // Auto-Yes preview: while this tab is on, ring the Yes that would be clicked
+  // right now, so you can see it was found. Purely visual and click-through.
+  let pvFound = null;
+  function updatePreview() {
+    if (!pvRing) return;
+    const on = schedule && schedule.auto;
+    const want = on ? schedule.yesText || 'yes' : null;
+    const live = on ? findYes(want) : null;
+    const el = live || (on ? findYes(want, true) : null);
+    pvFound = on ? !!el : null;
+    if (!on) { pvRing.style.display = pvTag.style.display = 'none'; return; }
+    const when = BurstTime.describe(schedule.targetMs);
+    if (el) {
+      const r = el.getBoundingClientRect();
+      pvRing.classList.toggle('wait', !live);
+      Object.assign(pvRing.style, { display: 'block', left: r.left - 5 + 'px', top: r.top - 5 + 'px',
+        width: r.width + 10 + 'px', height: r.height + 10 + 'px' });
+      pvTag.className = 'pv-tag' + (live ? '' : ' miss');
+      pvTag.textContent = live ? `✓ Burst Clicker will click this · ${when}`
+        : `Found, but disabled right now — will click it the moment it enables · ${when}`;
+      pvTag.style.display = 'block';
+      const above = r.top - 30 > 0;
+      pvTag.style.left = Math.max(4, Math.min(r.left - 5, innerWidth - pvTag.offsetWidth - 4)) + 'px';
+      pvTag.style.top = (above ? r.top - 30 : r.bottom + 9) + 'px';
+      pvTag.style.right = 'auto';
+    } else {
+      pvRing.style.display = 'none';
+      pvTag.className = 'pv-tag miss';
+      pvTag.textContent = `No "${settings.yesText || 'Yes'}" button on screen right now — at ${when} it will keep looking for it`;
+      Object.assign(pvTag.style, { display: 'block', left: 'auto', right: '12px', top: '12px' });
+    }
+  }
   let panelPos = { x: 16, y: 16 };
   let statusMsg = '';
   let statusErr = false;
@@ -441,6 +565,8 @@
       <div class="layer">
         <div class="capture"></div>
         <div class="marks"></div>
+        <div class="pv-ring"></div>
+        <div class="pv-tag"></div>
         <div class="panel">
           <div class="hd"><b>Burst Clicker</b><span class="x" data-a="close">✕</span></div>
           <div class="bd">
@@ -474,6 +600,8 @@
 
     captureEl = root.querySelector('.capture');
     mkWrap = root.querySelector('.marks');
+    pvRing = root.querySelector('.pv-ring');
+    pvTag = root.querySelector('.pv-tag');
     panelEl = root.querySelector('.panel');
     cdEl = root.querySelector('.cd');
     subEl = root.querySelector('.sub');
@@ -515,6 +643,8 @@
       : e.target.value;
     if (k === 'time') v = BurstTime.canonical(v) || v;
     settings[k] = v;
+    // A time typed here is a one-off, so it replaces the weekday/weekend rule.
+    if (k === 'time') settings.useSchedule = false;
     saveSettings();
     if (schedule) status('This tab is already armed — disarm to change its time', true);
     render();
@@ -651,7 +781,8 @@
     }
 
     const btn = root.querySelector('[data-a="arm"]');
-    btn.textContent = schedule ? 'Disarm' : 'Arm';
+    btn.textContent = schedule ? (schedule.repeat ? 'Turn off' : 'Disarm')
+      : settings.autoYes !== false ? 'Turn on' : 'Arm';
     btn.className = schedule ? 'd' : 'p';
     root.querySelector('[data-a="place"]').classList.toggle('on', placeMode);
     root.querySelector('[data-a="test"]').disabled = !!schedule;
@@ -683,12 +814,14 @@
     if (schedule) {
       cdEl.classList.remove('idle');
       cdEl.textContent = fmtDelta(schedule.targetMs - Date.now());
-      subEl.textContent = `${BurstTime.describe(schedule.targetMs)} · ${schedule.clicks} clicks · ${schedule.trusted ? 'trusted' : 'synthetic'}`;
+      subEl.textContent = `${BurstTime.describe(schedule.targetMs)} · ${schedule.auto ? 'auto-click Yes' : schedule.clicks + ' clicks'}${schedule.repeat ? ' · daily' : ''} · ${schedule.trusted ? 'trusted' : 'synthetic'}`;
     } else {
       cdEl.classList.add('idle');
       cdEl.textContent = fmtClock(Date.now());
-      const t = BurstTime.nextTarget(settings.time, settings.offsetMs);
-      subEl.textContent = !markers.length
+      const t = BurstTime.targetFor(settings);
+      subEl.textContent = settings.autoYes !== false
+        ? (t ? `auto-click "${settings.yesText}" · would fire ${BurstTime.describe(t)}` : 'cannot read the schedule')
+        : !markers.length
         ? 'no markers — hit Place, then click the page'
         : t ? `${markers.length} marker${markers.length === 1 ? '' : 's'} · ${planSize()} clicks · would fire ${BurstTime.describe(t)}`
             : `cannot read "${settings.time}"`;
@@ -717,7 +850,9 @@
       case 'state':
         reply({
           ok: true, url: URL_KEY, markers: markers.length, panelOpen, placeMode,
-          schedule, settings, plan: planSize()
+          schedule, settings, plan: planSize(),
+          // Would auto-Yes find a button here right now? Asked by the popup, on or off.
+          yesFound: settings.autoYes !== false ? !!findYes(String(settings.yesText || 'Yes').trim().toLowerCase(), true) : null
         });
         return true;
 
@@ -725,6 +860,7 @@
         schedule = msg.schedule || null;
         if (schedule) { movePanelClear(); startKeepalive(); } else stopKeepalive();
         render();
+        updatePreview();
         reply({ ok: true });
         return true;
 
@@ -733,6 +869,7 @@
       case 'clear': clearMarkers(); reply({ ok: true }); return true;
 
       case 'burstPrewarm': {
+        autoYes = msg.auto || null;
         setPlaceMode(false);
         shield(true);
         reply({ ok: true, points: prewarm() });
@@ -742,6 +879,10 @@
       case 'sync':
         syncClock();
         reply({ ok: true });
+        return true;
+
+      case 'hasYes':
+        reply({ ok: true, found: !!findYes(msg.want, true) });
         return true;
 
       case 'guard':
@@ -765,6 +906,7 @@
         shield(false);
         warm.clear();
         burstRun = { clicks: 0 };
+        autoYes = null;
         schedule = null;
         stopKeepalive();
         status(msg.record
@@ -802,5 +944,6 @@
     }
     render();
     setInterval(tickCountdown, 47);
+    setInterval(updatePreview, 400);   // own timer: hidden tabs run timers ~1/s at best
   })();
 })();

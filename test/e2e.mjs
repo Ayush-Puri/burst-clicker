@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // BURST_EXT_DIR lets the harness test a packaged copy instead of the repo, so the
 // zip that gets shared is verified rather than assumed.
 const EXT = process.env.BURST_EXT_DIR || join(HERE, '..');
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PORT = 8099;
 const CDP_PORT = 9333;
 const url = (p) => `http://127.0.0.1:${PORT}/${p}`;
@@ -190,6 +190,11 @@ async function testVisible(page, ctxId) {
   const MARKERS = [{ x: 140, y: 150 }, { x: 400, y: 290 }];
   const PER = 3;
 
+  // This suite drives placed markers, not the auto-Yes default.
+  await page.eval(`chrome.storage.local.get('settings').then(g =>
+    chrome.storage.local.set({ settings: { ...g.settings, autoYes: false } }))`, ctxId);
+  await sleep(200);
+
   const setup = await page.eval(`(() => {
     const sr = document.getElementById('burst-clicker-root').shadowRoot;
     const set = (k, v) => { const i = sr.querySelector('[data-k="' + k + '"]');
@@ -281,7 +286,7 @@ async function testHidden(sw) {
 
   const armAt = timeIn(7);
   await sw.eval(`chrome.storage.local.set({
-    settings: { time: '${armAt.str}', offsetMs: 0, startDelayMs: 0, burstCount: 2,
+    settings: { autoYes: false, useSchedule: false, time: '${armAt.str}', offsetMs: 0, startDelayMs: 0, burstCount: 2,
                 burstIntervalMs: 20, pattern: 'roundrobin', sustainMs: 0,
                 sustainGapMs: 100, trusted: true },
     'markers:${PAGE_URL}': [{ id: 1, x: 140, y: 150 }, { id: 2, x: 400, y: 290 }]
@@ -341,7 +346,7 @@ async function testMulti(sw) {
   // Each tab is armed from its own snapshot, so the two schedules differ.
   const armed = await sw.eval(`(async () => {
     const cfg = (time, count) => ({
-      time, offsetMs: 0, startDelayMs: 0, burstCount: count, burstIntervalMs: 10,
+      autoYes: false, useSchedule: false, time, offsetMs: 0, startDelayMs: 0, burstCount: count, burstIntervalMs: 10,
       pattern: 'roundrobin', sustainMs: 0, sustainGapMs: 100, trusted: false
     });
     await chrome.storage.local.set({
@@ -415,7 +420,7 @@ async function testEviction(browser, extId) {
 
   const armAt = timeIn(45);
   await sw.eval(`chrome.storage.local.set({
-    settings: { time: '${armAt.str}', offsetMs: 0, startDelayMs: 0, burstCount: 2,
+    settings: { autoYes: false, useSchedule: false, time: '${armAt.str}', offsetMs: 0, startDelayMs: 0, burstCount: 2,
                 burstIntervalMs: 15, pattern: 'roundrobin', sustainMs: 0,
                 sustainGapMs: 100, trusted: false },
     'markers:${D}': [{ id: 1, x: 140, y: 150 }]
@@ -497,7 +502,7 @@ async function attachTo(extId, pageUrl) {
 }
 
 const cfgFor = (timeStr, extra) => JSON.stringify({
-  time: timeStr, offsetMs: 0, startDelayMs: 0, burstCount: 4, burstIntervalMs: 25,
+  autoYes: false, useSchedule: false, time: timeStr, offsetMs: 0, startDelayMs: 0, burstCount: 4, burstIntervalMs: 25,
   pattern: 'roundrobin', sustainMs: 0, sustainGapMs: 100, trusted: false,
   lockToElement: true, stopOnHit: true, prewarmMs: 600, ...extra
 });
@@ -555,8 +560,10 @@ async function testAnchor(sw, extId) {
       `click at ${hits[0].x},${hits[0].y} · marker was dropped at ${placed.x},${placed.y}`);
     check('the marker followed the dialog', Math.abs(hits[0].x - placed.x) > 40,
       `moved ${Math.abs(hits[0].x - placed.x)}px`);
-    const drift = hits[0].t - armAt.epoch;
-    check('first click within 50ms of the instant', Math.abs(drift) < 50, `drift ${drift.toFixed(1)}ms`);
+    const drift = hits[0].wall - armAt.epoch;
+    const tr = (await page.eval(`chrome.storage.local.get('lastrun:${DIALOG_URL}')`, ctxId))['lastrun:' + DIALOG_URL];
+    check('first click within 50ms of the instant', Math.abs(drift) < 50,
+      `wall-clock drift ${drift}ms · perf-clock ${(hits[0].t - armAt.epoch).toFixed(1)}ms · ${JSON.stringify(tr && { timing: tr.timing, stages: tr.stages })}`);
   }
   check('one successful click ended the burst', hits.length === 1, `${hits.length} of 4 planned`);
   check('no retry leaked onto the page behind the closed dialog', bg === 0, `${bg} background clicks`);
@@ -598,6 +605,239 @@ async function testAnchor(sw, extId) {
   page.close();
   await sw.eval(`chrome.tabs.remove(${tabId}).catch(() => {})`);
   await sw.eval(`chrome.storage.local.remove(['${key}', '${runKey}'])`);
+}
+
+// ------------------------------------------------- 8: auto-Yes, no markers
+
+// No marker is ever placed: the page is scanned for "Yes" at the instant. Run
+// in a background tab, synthetic and trusted, plus a Yes that only appears
+// after the instant, which must be clicked the moment it exists — once.
+async function testAutoYes(sw) {
+  console.log('\n[8] auto-click "Yes" — no markers, weekday/weekend schedule');
+
+  const rule = await sw.eval(`(() => {
+    const at = (d, h, mi = 0) => new Date(2026, 9, d, h, mi).getTime();   // Oct 2026
+    const f = (ms) => { const d = new Date(ms); return d.getDay() + '@' + d.getHours() + ':' + d.getMinutes(); };
+    return [
+      f(BurstTime.nextScheduled('13:00', '10:00', 0, at(21, 9))),       // Wed 9am  -> Wed 13:00
+      f(BurstTime.nextScheduled('13:00', '10:00', 0, at(23, 13, 30))), // Fri 1:30 -> Sat 10:00
+      f(BurstTime.nextScheduled('13:00', '10:00', 0, at(25, 11)))       // Sun 11am -> Mon 13:00
+    ];
+  })()`);
+  check('schedule: 1 pm on weekdays, 10 am on weekends', rule.join() === '3@13:0,6@10:0,1@13:0', rule.join());
+
+  // Earlier suites overwrite stored settings, so read what a fresh install gets.
+  const defaults = await sw.eval(`DEFAULTS`);
+  check('auto-Yes and the schedule are on by default',
+    defaults && defaults.autoYes === true && defaults.useSchedule === true &&
+    defaults.weekdayTime === '13:00:00.000' && defaults.weekendTime === '10:00:00.000',
+    defaults && `${defaults.autoYes}/${defaults.useSchedule} ${defaults.weekdayTime} ${defaults.weekendTime}`);
+
+  const mKey = 'markers:' + DIALOG_URL;
+  const rKey = 'lastrun:' + DIALOG_URL;
+  const fKey = 'firedBase:' + DIALOG_URL;
+  const cfg = (str, extra) => cfgFor(str, { autoYes: true, yesText: 'Yes', autoWindowMs: 3000, autoSync: false, ...extra });
+
+  for (const trusted of [false, true]) {
+    const label = trusted ? 'trusted' : 'synthetic';
+    const tabId = await sw.eval(
+      `chrome.tabs.create({ url: '` + DIALOG_URL + `', active: false }).then(t => t.id)`);
+    await sleep(1500);
+    const inMain = (body) => sw.eval(`chrome.scripting.executeScript({
+      target: { tabId: ${tabId} }, world: 'MAIN', func: () => (${body})
+    }).then(r => r[0].result)`);
+
+    await sw.eval(`chrome.storage.local.remove(['${mKey}', '${rKey}', '${fKey}', 'enabledUrls'])`);
+    const armAt = timeIn(6);
+    await sw.eval(`chrome.storage.local.set({ settings: ${cfg(armAt.str, { trusted })} })`);
+    const res = await sw.eval(`arm(${tabId})`);
+    check(`[${label}] armed with no markers placed`, !!(res && res.ok), JSON.stringify(res && res.error));
+    // Move the dialog after arming: nothing about the button is known in advance.
+    await inMain(`window.__shift(120, 40)`);
+
+    if (!trusted) {
+      // The page shows which Yes it found: a ring over the button, following it.
+      await sleep(900);
+      const pv = await inMain(`(() => {
+        const sr = document.getElementById('burst-clicker-root').shadowRoot;
+        const ring = sr.querySelector('.pv-ring'), tag = sr.querySelector('.pv-tag');
+        const a = ring.getBoundingClientRect(), b = document.getElementById('yes').getBoundingClientRect();
+        return { shown: getComputedStyle(ring).display !== 'none', tag: tag.textContent,
+          covers: a.left <= b.left && a.top <= b.top && a.right >= b.right && a.bottom >= b.bottom };
+      })()`);
+      check('[preview] the Yes it will click is ringed on the page', pv.shown && pv.covers, pv.tag);
+    }
+
+    await sleep(Math.max(0, armAt.epoch - Date.now() + 1800));
+    const hits = await inMain('window.__hits');
+    const bg = await inMain('window.__bg');
+    check(`[${label}] found and clicked Yes exactly once`, hits.length === 1, `${hits.length} hits`);
+    if (hits.length) {
+      // wall = the page's Date.now() in the click handler: the clock "1 pm" is
+      // read from. timeOrigin + timeStamp can drift from it by tens of ms.
+      const drift = hits[0].wall - armAt.epoch;
+      const run = await sw.eval(`chrome.storage.local.get('${rKey}').then(g => g['${rKey}'] || null)`);
+      check(`[${label}] click within 50ms of the instant`, Math.abs(drift) < 50,
+        `wall-clock drift ${drift}ms · perf-clock ${(hits[0].t - armAt.epoch).toFixed(1)}ms · timing ${JSON.stringify(run && run.timing)}`);
+      check(`[${label}] tab was in the background`, hits[0].vis === 'hidden', hits[0].vis);
+      check(`[${label}] click landed inside the Yes button`, hits[0].inside === true, `${hits[0].x},${hits[0].y}`);
+      if (trusted) check(`[${label}] the click was trusted input`, hits[0].trusted === true);
+    }
+    check(`[${label}] nothing behind the dialog was clicked`, bg === 0, `${bg} background clicks`);
+
+    if (!trusted) {
+      // Turned on once, it stays on: armed again for the next day by itself.
+      const next = await sw.eval(`getSchedules().then(a => a[${tabId}] || null)`);
+      check('[daily] re-armed itself for the same time tomorrow',
+        !!next && next.repeat === true && Math.abs(next.targetMs - armAt.epoch - 86400000) < 2000,
+        next ? `next in ${((next.targetMs - Date.now()) / 3600000).toFixed(2)}h` : 'no schedule');
+      const enabled = await sw.eval(`chrome.storage.local.get('enabledUrls').then(g => g.enabledUrls || [])`);
+      check('[daily] the page is remembered as enabled', enabled.includes(DIALOG_URL), JSON.stringify(enabled));
+
+      // Clicking Yes often navigates away; an auto-Yes tab stays on.
+      await sw.eval(`chrome.tabs.update(${tabId}, { url: '${PAGE_URL}' })`);
+      await sleep(1500);
+      const kept = await sw.eval(`getSchedules().then(a => a[${tabId}] || null)`);
+      check('[daily] still on after the tab navigated to another page', !!kept && kept.urlKey === DIALOG_URL,
+        kept ? kept.urlKey : 'dropped');
+
+      // Restart / reopen: any tab that shows the enabled page arms itself.
+      const other = await sw.eval(`chrome.tabs.create({ url: '${DIALOG_URL}', active: false }).then(t => t.id)`);
+      await sleep(2000);
+      const auto = await sw.eval(`getSchedules().then(a => a[${other}] || null)`);
+      check('[daily] reopening the page arms the new tab with no clicks', !!auto && auto.auto === true,
+        auto ? new Date(auto.targetMs).toString().slice(0, 24) : 'not armed');
+      await sw.eval(`mutate(a => { for (const k of Object.keys(a)) delete a[k]; }).then(() => restoreEnabled())`);
+      const restored = await sw.eval(`getSchedules().then(a => [!!a[${other}], Object.keys(a).length])`);
+      check('[daily] after a restart wipes schedules, enabled tabs are re-armed', restored[0] === true,
+        JSON.stringify(restored));
+
+      // Turning it off is sticky: the page is forgotten.
+      await sw.eval(`disable(${other})`);
+      const after = await sw.eval(`chrome.storage.local.get('enabledUrls').then(g => g.enabledUrls || [])`);
+      check('[daily] turning it off forgets the page', !after.includes(DIALOG_URL), JSON.stringify(after));
+      await sw.eval(`chrome.tabs.remove(${other}).catch(() => {})`);
+    }
+    await sw.eval(`chrome.tabs.remove(${tabId}).catch(() => {})`);
+    await sleep(400);
+  }
+
+  // A Yes that does not exist at the instant: keep looking, click on arrival.
+  const tabId = await sw.eval(
+    `chrome.tabs.create({ url: '` + DIALOG_URL + `', active: true }).then(t => t.id)`);
+  await sleep(1500);
+  const inMain = (body) => sw.eval(`chrome.scripting.executeScript({
+    target: { tabId: ${tabId} }, world: 'MAIN', func: () => (${body})
+  }).then(r => r[0].result)`);
+  await inMain(`(document.getElementById('modal').remove(), true)`);
+  await sw.eval(`chrome.storage.local.remove(['${fKey}', 'enabledUrls'])`);
+  const armAt = timeIn(5);
+  await sw.eval(`chrome.storage.local.set({ settings: ${cfg(armAt.str)} })`);
+  const res = await sw.eval(`arm(${tabId})`);
+  check('[late] armed while there is no Yes on the page', !!(res && res.ok), JSON.stringify(res && res.error));
+  await sleep(900);
+  const miss = await inMain(`(() => {
+    const sr = document.getElementById('burst-clicker-root').shadowRoot;
+    const tag = sr.querySelector('.pv-tag');
+    return { shown: getComputedStyle(tag).display !== 'none', miss: tag.classList.contains('miss'), text: tag.textContent };
+  })()`);
+  check('[preview] with no Yes on screen it says so', miss.shown && miss.miss, miss.text);
+  await sleep(Math.max(0, armAt.epoch - Date.now() + 400));
+  const opened = await inMain(`(window.__reopen(), performance.timeOrigin + performance.now())`);
+  await sleep(1500);
+  const hits = await inMain('window.__hits');
+  check('[late] the Yes that appeared after the instant was clicked once', hits.length === 1, `${hits.length} hits`);
+  if (hits.length) {
+    const lag = hits[0].t - opened;
+    check('[late] clicked within 50ms of it appearing', lag >= 0 && lag < 50, `${lag.toFixed(1)}ms after it appeared`);
+  }
+  check('[late] nothing behind the dialog was clicked', (await inMain('window.__bg')) === 0);
+
+  await sw.eval(`chrome.tabs.remove(${tabId}).catch(() => {})`);
+
+  // The site's clock decides who was first. Serve a page whose clock runs
+  // 700ms ahead: the click must go out on the site's instant, 700ms early here.
+  const SKEW = 700;
+  const sTab = await sw.eval(
+    `chrome.tabs.create({ url: '` + DIALOG_URL + `?skew=${SKEW}', active: false }).then(t => t.id)`);
+  await sleep(1500);
+  const inS = (body) => sw.eval(`chrome.scripting.executeScript({
+    target: { tabId: ${sTab} }, world: 'MAIN', func: () => (${body})
+  }).then(r => r[0].result)`);
+  await sw.eval(`chrome.storage.local.remove(['${fKey}', 'enabledUrls'])`);
+  const syncAt = timeIn(12);
+  await sw.eval(`chrome.storage.local.set({ settings: ${cfg(syncAt.str, { autoSync: true })} })`);
+  const sres = await sw.eval(`arm(${sTab})`);
+  check('[sync] armed against a site whose clock is 700ms ahead', !!(sres && sres.ok), JSON.stringify(sres && sres.error));
+  // Read before the worker takes the schedule out to fire it (1.5s ahead).
+  await sleep(Math.max(0, syncAt.epoch - Date.now() - 3000));
+  const synced = await sw.eval(`getSchedules().then(a => a[${sTab}] || null)`);
+  check('[sync] measured the site clock before the instant',
+    !!synced && /^site clock/.test(synced.syncNote || '') && Math.abs((synced.skew || 0) - SKEW) <= 30,
+    synced ? synced.syncNote : 'no schedule');
+  await sleep(Math.max(0, syncAt.epoch - Date.now() + 1200));
+  const sh = await inS('window.__hits');
+  check('[sync] clicked once', sh.length === 1, `${sh.length} hits`);
+  if (sh.length) {
+    const vsSite = sh[0].wall - (syncAt.epoch - SKEW);
+    check('[sync] the click landed on the site\'s instant (within 30ms)', Math.abs(vsSite) <= 30,
+      `${vsSite.toFixed(1)}ms vs the site's ${syncAt.str}, ${sh[0].wall - syncAt.epoch}ms vs this machine`);
+  }
+  const nextS = await sw.eval(`getSchedules().then(a => a[${sTab}] || null)`);
+  check('[sync] fired early, yet did not re-arm for the same instant', !!nextS && nextS.targetMs - Date.now() > 3600000,
+    nextS ? `next in ${((nextS.targetMs - Date.now()) / 3600000).toFixed(1)}h` : 'none');
+
+  await sw.eval(`chrome.tabs.remove(${sTab}).catch(() => {})`);
+  await sw.eval(`chrome.storage.local.remove(['${mKey}', '${rKey}', '${fKey}', 'enabledUrls'])`);
+
+  // The real morning: 6 lead pages open in background tabs, each with its own
+  // Yes, one of them disabled until the instant. One click turns them all on;
+  // all six must land on the same instant.
+  const N = 6;
+  const tabs = [];
+  for (let i = 0; i < N; i++) {
+    tabs.push(await sw.eval(`chrome.tabs.create({ url: '${DIALOG_URL}?lead=${i}', active: false }).then(t => t.id)`));
+  }
+  await sleep(2500);
+  const inTab = (id, body) => sw.eval(`chrome.scripting.executeScript({
+    target: { tabId: ${id} }, world: 'MAIN', func: () => (${body})
+  }).then(r => r[0].result)`);
+  await inTab(tabs[N - 1], `(document.getElementById('yes').disabled = true, true)`);
+
+  const multiAt = timeIn(9);
+  await sw.eval(`chrome.storage.local.set({ settings: ${cfg(multiAt.str)} })`);
+  const all = await sw.eval(`armAllWithYes()`);
+  check(`[multi] one click turned on all ${N} tabs with a Yes`, all.armed === N, JSON.stringify(all));
+  check('[multi] a tab without a Yes was left off', all.noYes >= 1, `${all.noYes} left off`);
+
+  await sleep(1500);
+  const dis = await inTab(tabs[N - 1], `(() => {
+    const sr = document.getElementById('burst-clicker-root').shadowRoot;
+    return sr.querySelector('.pv-tag').textContent;
+  })()`);
+  check('[multi] a disabled Yes is shown as found-but-waiting', /disabled/.test(dis), dis);
+
+  // Enable it 150ms after the instant, as a site would at 1 pm.
+  await sleep(Math.max(0, multiAt.epoch - Date.now() + 150));
+  const enabledAt = await inTab(tabs[N - 1], `(document.getElementById('yes').disabled = false, Date.now())`);
+  await sleep(2500);
+
+  const drifts = [];
+  let ok = 0;
+  for (let i = 0; i < N; i++) {
+    const h = await inTab(tabs[i], 'window.__hits');
+    if (h.length === 1) ok++;
+    if (h.length) drifts.push(i === N - 1 ? h[0].wall - enabledAt : h[0].wall - multiAt.epoch);
+  }
+  check(`[multi] every tab clicked its Yes exactly once`, ok === N, `${ok}/${N}`);
+  const onTime = drifts.slice(0, N - 1);
+  check('[multi] the five enabled ones all within 30ms of the instant', onTime.length === N - 1 && onTime.every((d) => Math.abs(d) <= 30),
+    `drifts ${onTime.join(', ')}ms`);
+  check('[multi] the disabled one was clicked as soon as it enabled', drifts.length === N && drifts[N - 1] >= 0 && drifts[N - 1] < 50,
+    `${drifts[N - 1]}ms after it enabled`);
+
+  for (const id of tabs) await sw.eval(`chrome.tabs.remove(${id}).catch(() => {})`);
+  await sw.eval(`chrome.storage.local.remove(['${mKey}', '${rKey}', '${fKey}', 'enabledUrls'])`);
 }
 
 // ------------------------------------------------- 7: locked + trusted + hidden
@@ -686,6 +926,9 @@ async function testAnchorTrusted(sw) {
 async function main() {
   const server = createServer((req, res) => {
     const file = req.url.startsWith('/dialog') ? 'dialog.html' : 'page.html';
+    // ?skew=N plays a site whose clock runs N ms ahead of this machine.
+    const skew = +(new URL(req.url, 'http://x').searchParams.get('skew') || 0);
+    if (skew) res.setHeader('Date', new Date(Date.now() + skew).toUTCString());
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
     res.end(readFileSync(join(HERE, file)));
   }).listen(PORT);
@@ -754,6 +997,7 @@ async function main() {
 
     if (!only || only === 'anchor') { await testAnchor(sw, extId); await testAnchorTrusted(sw); }
     if (only === 'trusted-anchor') await testAnchorTrusted(sw);
+    if (!only || only === 'auto') await testAutoYes(sw);
     if (!only || only === 'hidden') await testHidden(sw);
     if (!only || only === 'multi') await testMulti(sw);
     if (!only || only === 'evict') {

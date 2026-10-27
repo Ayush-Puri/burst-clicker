@@ -22,9 +22,57 @@
       Open a normal http/https page — other armed tabs below still run.
     </div>
 
+    <button id="reset" class="b primary wide-btn">⟳ Reset to schedule — 1 pm weekdays · 10 am weekends</button>
+
+    <label class="toggle">
+      <input id="autoYes" data-k="autoYes" type="checkbox">
+      <span>
+        <b>Auto-click "Yes" — no markers needed</b>
+        <em>Scans the page for the Yes button at fire time and clicks it, once. If it is
+        not there yet, keeps looking and clicks the instant it appears.</em>
+      </span>
+    </label>
+
+    <label class="toggle">
+      <input id="useSchedule" data-k="useSchedule" type="checkbox">
+      <span>
+        <b>Weekday / weekend schedule</b>
+        <em>Fires at the weekday time Mon–Fri and the weekend time Sat–Sun. Turn off to
+        use the single "Fire at" time below.</em>
+      </span>
+    </label>
+
+    <label class="toggle">
+      <input id="autoSync" data-k="autoSync" type="checkbox">
+      <span>
+        <b>Match the website's clock</b>
+        <em>~20 s before each fire, measures how far the site's clock is from this computer
+        and fires on the site's 1 pm, not this computer's. Replaces the manual offset.</em>
+      </span>
+    </label>
+
+    <section class="grid">
+      <label class="f">
+        <span>Weekday time (Mon–Fri)</span>
+        <input id="weekdayTime" data-k="weekdayTime" placeholder="1:00 pm">
+      </label>
+      <label class="f">
+        <span>Weekend time (Sat–Sun)</span>
+        <input id="weekendTime" data-k="weekendTime" placeholder="10:00 am">
+      </label>
+      <label class="f">
+        <span>Button text to click</span>
+        <input id="yesText" data-k="yesText" placeholder="Yes">
+      </label>
+      <label class="f">
+        <span>Keep looking for (ms)</span>
+        <input id="autoWindowMs" data-k="autoWindowMs" type="number" min="0" step="500">
+      </label>
+    </section>
+
     <section class="grid">
       <label class="f wide">
-        <span>Fire at — exact local time</span>
+        <span>Fire at — exact local time (used when the schedule is off)</span>
         <input id="time" data-k="time" placeholder="1:00 pm  ·  13:00:00.250">
       </label>
       <label class="f">
@@ -114,8 +162,11 @@
       (green ring) and falls back to its viewport coordinates. Saved per page URL.</p>
 
     <div class="row main-row">
-      <button id="arm" class="b primary">Arm this tab</button>
+      <button id="arm" class="b primary">Turn on for this tab</button>
       <button id="test" class="b">Test now</button>
+    </div>
+    <div class="row">
+      <button id="armAll" class="b primary">Turn on for every tab with a Yes</button>
     </div>
 
     <div id="status" class="status"></div>

@@ -134,3 +134,6 @@ input[type=checkbox] { width: auto; }
   font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint);
   max-height: 108px; overflow: auto; white-space: pre-wrap;
 }
+
+.sub { white-space: pre-line; }
+.wide-btn { width: 100%; margin: 6px 0 10px; }

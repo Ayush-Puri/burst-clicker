@@ -119,18 +119,51 @@
 
   <div class="badge"><i></i> Chrome extension</div>
   <h1>Burst Clicker</h1>
-  <p class="lede">Clicks the spots you mark, at an exact wall-clock time you type, in a rapid
-  burst — across as many tabs as you like, whether or not they are on screen.</p>
-  <p class="path">~/code/burst-clicker</p>
+  <p class="lede">Clicks the <b>Yes</b> button on a page automatically — 1:00 pm Monday–Friday,
+  10:00 am Saturday–Sunday, every day, on the website's own clock. Turn it on once per tab;
+  nothing to place, nothing to re-arm.</p>
 
   <h2>Install</h2>
   <ol class="steps">
     <li><b>Open <code>chrome://extensions</code></b> and switch on <b>Developer mode</b> (top right).</li>
-    <li><b>Click “Load unpacked”</b> and pick the folder <code>~/code/burst-clicker</code>.</li>
+    <li><b>Click “Load unpacked”</b> and pick the unzipped <code>burst-clicker</code> folder — the
+      one that contains <code>manifest.json</code>. Keep that folder where it is.</li>
     <li><b>Pin the target icon</b> to the toolbar so you can reach it fast.</li>
   </ol>
 
-  <h2>Run one</h2>
+  <h2>Use it — auto-click “Yes”</h2>
+  <ol class="steps">
+    <li><b>Open the page that shows the Yes button.</b> Leave it open; it can be in the
+      background or another window.</li>
+    <li><b>Toolbar icon → Turn on for this tab.</b> That's it. A pulsing <b>green ring</b>
+      appears around the Yes it will click, labelled with the time. If there's no Yes on
+      screen, an amber notice in the top-right corner says so.</li>
+    <li><b>Several lead pages?</b> Open them all, then <b>Toolbar icon → Turn on for every tab
+      with a Yes</b> — one click turns on every tab showing a Yes. A Yes that is disabled
+      until 1 pm gets an amber ring and is clicked the moment it enables.</li>
+  </ol>
+  <div class="note">
+    <h4>What it does from then on</h4>
+    <p>At 1 pm on weekdays and 10 am on weekends it finds the visible, enabled button labelled
+    <b>Yes</b> (the top-most one if there are several) and clicks it <b>once</b>. If no Yes is
+    there yet it keeps looking for 3 seconds and clicks the moment one appears. About 20 seconds
+    before, it measures the website's clock and fires on the site's 1 pm, not your computer's.
+    It then arms itself for the next day, and stays on through reloads, navigation and Chrome
+    restarts — until you press <b>Turn off for this tab</b> or close the tab. <b>Test now</b>
+    clicks the Yes on screen in about a second, to check it finds it. Keep the computer awake
+    at those times.</p>
+  </div>
+
+  <h2>Update</h2>
+  <ol class="steps">
+    <li><b>Replace the contents</b> of your <code>burst-clicker</code> folder with the new
+      version's files (same folder, same place), or <code>git pull</code> in it.</li>
+    <li><b><code>chrome://extensions</code> → reload ⟳</b> on the Burst Clicker card. Tabs that
+      were on arm themselves again.</li>
+  </ol>
+
+  <h2>Markers instead (advanced)</h2>
+  <p>Turn off <b>Auto-click “Yes”</b> and <b>Weekday / weekend schedule</b> in the popup, then:</p>
   <ol class="steps">
     <li><b>Open the page you want clicked</b> and get it into the exact state and window size
       you'll leave it in.</li>

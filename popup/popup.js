@@ -10,7 +10,14 @@ const DEFAULTS = {
   trusted: false,
   lockToElement: true,
   stopOnHit: true,
-  prewarmMs: 600
+  prewarmMs: 600,
+  autoYes: true,
+  yesText: 'Yes',
+  autoWindowMs: 3000,
+  useSchedule: true,
+  weekdayTime: '13:00:00.000',
+  weekendTime: '10:00:00.000',
+  autoSync: true
 };
 
 const $ = (id) => document.getElementById(id);
@@ -107,24 +114,37 @@ function paint() {
   if (sch) {
     cd.classList.remove('idle');
     cd.textContent = BurstTime.fmtDelta(sch.targetMs - Date.now());
-    sub.textContent = `this tab fires ${BurstTime.describe(sch.targetMs)} · ${sch.clicks} clicks · ${sch.trusted ? 'trusted' : 'synthetic'}`;
+    sub.textContent = `this tab fires ${BurstTime.describe(sch.targetMs)} · ${sch.auto ? 'auto-click Yes' : sch.clicks + ' clicks'}${sch.repeat ? ' · repeats every day' : ''} · ${sch.trusted ? 'trusted' : 'synthetic'}`
+      + (sch.syncNote ? `\n${sch.syncNote}` : '');
   } else {
     cd.classList.add('idle');
     cd.textContent = BurstTime.fmtClock(Date.now());
-    const t = BurstTime.nextTarget(settings.time, settings.offsetMs);
+    const t = BurstTime.targetFor(settings);
+    const auto = settings.autoYes !== false;
     sub.textContent = !alive ? `${rows.length} other tab${rows.length === 1 ? '' : 's'} armed`
+      : auto ? (t ? `auto-click "${settings.yesText}" · would fire ${BurstTime.describe(t)}` : 'cannot read the schedule times')
       : !markers ? 'no markers yet — hit Place markers, then click the page'
       : t ? `${markers} marker${markers === 1 ? '' : 's'} · ${BurstPlan.size(markers, settings)} clicks · would fire ${BurstTime.describe(t)}`
           : `cannot read "${settings.time}" — try 1:00 pm or 13:00:00`;
   }
+  // Is there a Yes for it to click? The page also rings it in green while on.
+  if (alive && state && state.yesFound != null) {
+    sub.textContent += state.yesFound
+      ? `\n✓ "${settings.yesText}" button found on this page`
+      : `\n✗ no "${settings.yesText}" button on screen right now`;
+  }
 
   const arm = $('arm');
-  arm.textContent = sch ? 'Disarm this tab' : 'Arm this tab';
+  const auto = settings.autoYes !== false;
+  arm.textContent = sch ? (sch.repeat ? 'Turn off for this tab' : 'Disarm this tab')
+    : auto ? 'Turn on for this tab' : 'Arm this tab';
   arm.className = 'b ' + (sch ? 'danger' : 'primary');
   arm.disabled = !alive && !sch;
   $('test').disabled = !alive || !!sch;
   for (const id of ['place', 'panel', 'clear']) $(id).disabled = !alive;
+  $('armAll').hidden = settings.autoYes === false;
   $('place').classList.toggle('on', !!(state && state.placeMode));
+  $('time').disabled = settings.useSchedule !== false;
 
   paintArmed();
 }
@@ -138,7 +158,7 @@ function paintArmed() {
   $('disarmAll').disabled = !rows.length;
   $('armedHint').classList.toggle('hidden', rows.length > 0);
 
-  const sig = rows.map((r) => `${r.tabId}:${r.targetMs}:${r.clicks}:${r.title}`).join('|');
+  const sig = rows.map((r) => `${r.tabId}:${r.targetMs}:${r.clicks}:${r.auto}:${r.title}`).join('|');
   if (sig !== armedSig) {
     armedSig = sig;
     box.innerHTML = rows.length ? rows.map((r) => `
@@ -146,7 +166,7 @@ function paintArmed() {
         <div class="acd">--:--:--.---</div>
         <div class="ameta">
           <div class="atitle">${esc(r.title || r.urlKey)}</div>
-          <div class="awhen">${BurstTime.describe(r.targetMs)} · ${r.clicks} clicks · ${r.markers} marker${r.markers === 1 ? '' : 's'}${r.trusted ? ' · trusted' : ''}</div>
+          <div class="awhen">${BurstTime.describe(r.targetMs)} · ${r.auto ? 'auto-click Yes' : `${r.clicks} clicks · ${r.markers} marker${r.markers === 1 ? '' : 's'}`}${r.trusted ? ' · trusted' : ''}</div>
         </div>
         <button class="ax" data-disarm="${r.tabId}" title="Disarm">✕</button>
       </div>`).join('') : '<div class="empty">nothing armed</div>';
@@ -175,7 +195,17 @@ document.addEventListener('input', async (e) => {
 // Normalise the typed time only when the field is committed, so it never fights
 // you mid-keystroke.
 document.addEventListener('change', async (e) => {
-  if (!e.target.dataset || e.target.dataset.k !== 'time') return;
+  const key = e.target.dataset && e.target.dataset.k;
+  if (key === 'weekdayTime' || key === 'weekendTime') {
+    const c = BurstTime.canonical(e.target.value);
+    if (!c) { status(`Cannot read "${e.target.value}" — try 1:00 pm or 13:00`, true); return; }
+    settings[key] = c;
+    await chrome.storage.local.set({ settings });
+    fillInputs();
+    paint();
+    return;
+  }
+  if (key !== 'time') return;
   const canon = BurstTime.canonical(e.target.value);
   if (!canon) { status(`Cannot read "${e.target.value}" — try 1:00 pm, 13:00, or 13:00:00.250`, true); return; }
   settings.time = canon;
@@ -200,6 +230,7 @@ document.addEventListener('click', async (e) => {
       ? t.dataset.at
       : BurstTime.fmtClock(Date.now() + +t.dataset.in * 1000);
     settings.offsetMs = 0;
+    settings.useSchedule = false;   // a quick-set time is a one-off, not the weekly rule
     await chrome.storage.local.set({ settings });
     fillInputs();
     paint();
@@ -208,6 +239,25 @@ document.addEventListener('click', async (e) => {
   }
 
   switch (t.id) {
+    // One tap back to the rule: 1 pm Mon–Fri, 10 am Sat–Sun. The clock offset is
+    // kept — it is a property of the server, not of the schedule. An armed tab is
+    // re-armed so its countdown picks up the fresh instant.
+    case 'reset': {
+      settings.useSchedule = true;
+      settings.weekdayTime = DEFAULTS.weekdayTime;
+      settings.weekendTime = DEFAULTS.weekendTime;
+      await chrome.storage.local.set({ settings });
+      fillInputs();
+      let msg = `Reset — next fire ${BurstTime.describe(BurstTime.targetFor(settings))}`;
+      if (mine()) {
+        await toWorker({ type: 'disarm', tabId });
+        const res = await toWorker({ type: 'arm', tabId });
+        msg = res && res.ok ? `Reset and re-armed for ${BurstTime.describe(res.schedule.targetMs)}` : ((res && res.error) || 'could not re-arm');
+      }
+      await refresh();
+      status(msg);
+      break;
+    }
     case 'sync': {
       status('Sampling the server clock — watch the in-page panel…');
       await toTab('sync');
@@ -237,8 +287,20 @@ document.addEventListener('click', async (e) => {
       const res = await toWorker(sch ? { type: 'disarm', tabId } : { type: 'arm', tabId });
       await refresh();
       if (sch) status('Disarmed');
-      else if (res && res.ok) status(`Armed for ${BurstTime.describe(res.schedule.targetMs)} — the tab can go to the background`);
+      else if (res && res.ok) status(res.schedule.repeat
+        ? `On — clicks Yes at ${BurstTime.describe(res.schedule.targetMs)}, then every weekday 1 pm / weekend 10 am. Leave the tab open.`
+        : `Armed for ${BurstTime.describe(res.schedule.targetMs)} — the tab can go to the background`);
       else status((res && res.error) || 'could not arm', true);
+      break;
+    }
+    case 'armAll': {
+      status('Looking for a Yes in every open tab…');
+      const res = await toWorker({ type: 'armAllYes' });
+      await refresh();
+      if (!res || !res.ok) { status('could not turn tabs on', true); break; }
+      status(`Turned on ${res.armed} tab${res.armed === 1 ? '' : 's'}`
+        + (res.already ? ` · ${res.already} already on` : '')
+        + (res.noYes ? ` · ${res.noYes} without a Yes left off` : ''), !res.armed && !res.already);
       break;
     }
     case 'disarmAll': {

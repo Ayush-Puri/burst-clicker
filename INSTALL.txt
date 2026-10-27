@@ -1,47 +1,73 @@
-Burst Clicker — install (about 20 seconds)
-=========================================
+Burst Clicker — install, update, use
+====================================
 
-Clicks spots you mark, at an exact time you type, in a rapid burst. Works across
-several tabs at once, including tabs that aren't on screen.
+Clicks the "Yes" button on a page automatically: 1:00 pm Monday-Friday and
+10:00 am Saturday-Sunday, every day, timed to the website's own clock.
+No markers to place, nothing to re-arm.
 
-1. UNZIP THIS FILE FIRST.
-   Chrome needs a folder, not a zip. You should end up with a folder called
-   "burst-clicker" containing manifest.json.
+INSTALL (about a minute)
+------------------------
+1. UNZIP THIS FILE. Chrome needs a folder, not a zip. You get a folder called
+   "burst-clicker" that contains manifest.json.
 
-2. Open Chrome and go to:  chrome://extensions
+2. MOVE THAT FOLDER SOMEWHERE PERMANENT (e.g. Documents). Chrome loads it from
+   that exact place every time it starts — don't delete it afterwards.
 
-3. Turn ON "Developer mode" (toggle, top right).
+3. Open Chrome and go to:  chrome://extensions
 
-4. Click "Load unpacked" and select the unzipped "burst-clicker" folder.
-   Select the folder that directly contains manifest.json — not a folder above it.
+4. Turn ON "Developer mode" (toggle, top right).
 
-5. A card called "Burst Clicker" appears. Click the puzzle-piece icon in the
-   Chrome toolbar and pin it so you can reach it.
+5. Click "Load unpacked" and select the "burst-clicker" folder — the one that
+   directly contains manifest.json, not a folder above it.
 
-Using it
---------
-1. Open the page you want clicked, sized how you'll leave it.
-2. Click the Burst Clicker icon -> "Place markers", then click the page wherever
-   you want a click to happen. Numbered rings appear. Esc when done.
-3. Set "Fire at" — type it however you like: 1pm, 1:05 PM, 13:00, 13:00:00.250
-4. Set clicks per marker and the gap between them.
-5. "Arm this tab". Repeat on other tabs if you want. Leave them open — they do
-   NOT need to be on screen.
+6. Click the puzzle-piece icon in the Chrome toolbar and pin "Burst Clicker".
 
-Full guide: open GUIDE.html (in this folder) in any browser.
+USE
+---
+1. Open the page that shows the "Yes" button. Leave it open — it can be in the
+   background or in another window.
+2. Click the Burst Clicker icon -> "Turn on for this tab".
 
-Things worth knowing
+Done. A green ring appears around the Yes button it will click, labelled
+"Burst Clicker will click this" with the time. No Yes on screen? An amber notice
+in the top-right corner says so (at click time it keeps looking for one).
+
+SEVERAL LEAD PAGES? Open all of them first, then click the icon once ->
+"Turn on for every tab with a Yes". Every tab showing a Yes is turned on at once.
+A Yes that is disabled until 1 pm is fine: it shows an amber ring and gets
+clicked the moment it enables.
+
+It clicks Yes once at 1 pm on weekdays and 10 am on weekends, every day,
+until you click "Turn off for this tab" or close the tab. It stays on through
+page reloads and Chrome restarts.
+
+- "Test now" (with a Yes on screen) clicks it in about a second, once — a quick
+  check that it finds the button. It does not change the daily schedule.
+- "Reset to schedule" puts the times back to 1 pm / 10 am.
+- KEEP THE COMPUTER AWAKE at those times. A sleeping computer cannot click; it
+  would click late, when it wakes.
+
+UPDATE
+------
+1. Download the new zip and unzip it.
+2. Replace the CONTENTS of your existing burst-clicker folder with the new files
+   (same folder, same place — this keeps your settings).
+3. chrome://extensions -> click the reload arrow on the Burst Clicker card.
+Do not "Remove" and re-load from a different folder: Chrome treats that as a new
+extension and your settings start over.
+
+THINGS WORTH KNOWING
 --------------------
 - Chrome will warn "Disable developer mode extensions" now and then. That's
   normal for any extension not installed from the Chrome Web Store. Keep it.
-- Markers are screen positions, not buttons. Don't scroll or resize the window
-  after placing them.
-- Schedules are cleared when you quit Chrome (tab ids change) — re-arm after
-  restarting. If the computer sleeps through the time, it fires late on wake.
+- It looks for a visible, enabled button labelled exactly "Yes". If there are
+  several, the top-most one is clicked. A Yes inside an embedded frame is not found.
 - chrome:// pages, the Chrome Web Store and PDFs can't be clicked by any
   extension. That's a Chrome rule, not a bug.
-- "Trusted clicks" is optional, for sites that ignore normal synthetic clicks.
-  It uses Chrome's debugger, so Chrome shows a "being debugged" banner while
-  armed. Turn it on BEFORE placing markers — the banner shifts the page.
+- "Trusted clicks" is optional, for sites that ignore normal clicks. Chrome
+  shows a "being debugged" banner while it is on.
+- The older marker mode is still there: turn off "Auto-click Yes" in the popup.
+
+Full guide: open GUIDE.html (in this folder) in any browser.
 
 Automating clicks may be against some sites' terms of service. Your call.

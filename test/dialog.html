@@ -45,7 +45,7 @@
     function onYes(e) {
       const r = e.currentTarget.getBoundingClientRect();
       window.__hits.push({
-        which: 'yes', t: origin + e.timeStamp, trusted: e.isTrusted,
+        which: 'yes', t: origin + e.timeStamp, wall: Date.now(), trusted: e.isTrusted,
         x: e.clientX, y: e.clientY, vis: document.visibilityState,
         inside: e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
       });
